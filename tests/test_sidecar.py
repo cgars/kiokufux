@@ -1,7 +1,7 @@
 import json
-from fotofux.models import Photo
-from fotofux.sidecar import SCHEMA, sidecar_document, export_sidecars
-from fotofux.catalog import Catalog
+from kiokufux.models import Photo
+from kiokufux.sidecar import SCHEMA, sidecar_document, export_sidecars
+from kiokufux.catalog import Catalog
 
 
 def test_sidecar_document_schema(tmp_path):
@@ -12,8 +12,8 @@ def test_sidecar_document_schema(tmp_path):
 
 
 def test_export_sidecars(tmp_path):
-    db = Catalog(tmp_path / ".fotofux" / "catalog.sqlite"); db.init_schema()
+    db = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite"); db.init_schema()
     img = tmp_path / "x.jpg"; img.write_text("not image")
     db.upsert_photo(Photo("id", img, "x.jpg", "hash"))
     assert export_sidecars(db) == 1
-    assert json.loads((tmp_path / "x.jpg.fotofux.json").read_text())["photo_id"] == "id"
+    assert json.loads((tmp_path / "x.jpg.kiokufux.json").read_text())["photo_id"] == "id"

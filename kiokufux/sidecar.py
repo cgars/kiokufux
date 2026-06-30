@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from .catalog import Catalog
 
-SCHEMA = "fotofux.sidecar.v1"
+SCHEMA = "kiokufux.sidecar.v1"
 
 
 def sidecar_document(photo, embedding_model: str | None = None) -> dict:
@@ -20,7 +20,7 @@ def export_sidecars(catalog: Catalog, export_dir: Path | None = None) -> int:
     count = 0
     if export_dir: export_dir.mkdir(parents=True, exist_ok=True)
     for photo in catalog.list_photos():
-        target = (export_dir / f"{photo.photo_id}.fotofux.json") if export_dir else photo.source_path.with_name(photo.source_path.name + ".fotofux.json")
+        target = (export_dir / f"{photo.photo_id}.kiokufux.json") if export_dir else photo.source_path.with_name(photo.source_path.name + ".kiokufux.json")
         target.write_text(json.dumps(sidecar_document(photo), indent=2, sort_keys=True) + "\n", encoding="utf-8")
         count += 1
     return count

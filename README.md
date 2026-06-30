@@ -1,18 +1,18 @@
-# Fotofux / KiokuFux
+# KiokuFux
 
-Fotofux MVP 1 is a local-first CLI prototype for indexing private photo archives and searching them by visual content and basic metadata. It does not modify original image files.
+KiokuFux MVP 1 is a local-first CLI prototype for indexing private photo archives and searching them by visual content and basic metadata. It does not modify original image files.
 
 ## What MVP 1 does
 
 - Recursively scans `.jpg`, `.jpeg`, `.png`, `.tif`, `.tiff`, and `.webp` files.
 - Generates stable photo IDs from SHA-256 file hashes.
 - Extracts basic metadata with Pillow, including dimensions, file timestamps, MIME type, EXIF date, and GPS when available.
-- Stores a resumable SQLite catalog in `.fotofux/catalog.sqlite`.
-- Generates JPEG thumbnails in `.fotofux/thumbnails/` with EXIF orientation applied.
-- Generates local embeddings in `.fotofux/embeddings/`.
+- Stores a resumable SQLite catalog in `.kiokufux/catalog.sqlite`.
+- Generates JPEG thumbnails in `.kiokufux/thumbnails/` with EXIF orientation applied.
+- Generates local embeddings in `.kiokufux/embeddings/`.
 - Runs text-to-image semantic search using cosine similarity.
-- Exports versioned `.fotofux.json` sidecars next to photos.
-- Logs scan errors to `.fotofux/logs/fotofux.log` and records unreadable images without stopping the scan.
+- Exports versioned `.kiokufux.json` sidecars next to photos.
+- Logs scan errors to `.kiokufux/logs/kiokufux.log` and records unreadable images without stopping the scan.
 
 ## Installation
 
@@ -28,34 +28,34 @@ For a stronger CLIP backend, optionally install OpenCLIP dependencies:
 pip install -e '.[clip]'
 ```
 
-If OpenCLIP is unavailable, Fotofux falls back to a dependency-light local embedding backend so the MVP remains runnable offline.
+If OpenCLIP is unavailable, KiokuFux falls back to a dependency-light local embedding backend so the MVP remains runnable offline.
 
 ## CLI usage
 
 ```bash
-fotofux init PATH
-fotofux scan PATH
-fotofux thumbnails PATH
-fotofux embed PATH
-fotofux search PATH "query text"
-fotofux export-sidecars PATH
+kiokufux init PATH
+kiokufux scan PATH
+kiokufux thumbnails PATH
+kiokufux embed PATH
+kiokufux search PATH "query text"
+kiokufux export-sidecars PATH
 ```
 
 ## Example workflow
 
 ```bash
-fotofux init ./photos
-fotofux scan ./photos
-fotofux thumbnails ./photos
-fotofux embed ./photos
-fotofux search ./photos "red car in front of a house"
-fotofux export-sidecars ./photos
+kiokufux init ./photos
+kiokufux scan ./photos
+kiokufux thumbnails ./photos
+kiokufux embed ./photos
+kiokufux search ./photos "red car in front of a house"
+kiokufux export-sidecars ./photos
 ```
 
-The workspace is created at `./photos/.fotofux/`:
+The workspace is created at `./photos/.kiokufux/`:
 
 ```text
-.fotofux/
+.kiokufux/
   catalog.sqlite
   thumbnails/
   embeddings/
@@ -65,7 +65,7 @@ The workspace is created at `./photos/.fotofux/`:
 
 ## Sidecars
 
-`fotofux export-sidecars ./photos` writes files named like `image.jpg.fotofux.json` next to each indexed image. Sidecars use schema `fotofux.sidecar.v1` and include IDs, source paths, hashes, extracted metadata, semantic status, and review state.
+`kiokufux export-sidecars ./photos` writes files named like `image.jpg.kiokufux.json` next to each indexed image. Sidecars use schema `kiokufux.sidecar.v1` and include IDs, source paths, hashes, extracted metadata, semantic status, and review state.
 
 ## Limitations
 

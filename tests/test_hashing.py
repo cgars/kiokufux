@@ -1,4 +1,4 @@
-from fotofux.hashing import file_sha256, photo_id_for_hash
+from kiokufux.hashing import file_sha256, photo_id_for_hash
 
 
 def test_file_sha256_and_stable_id(tmp_path):

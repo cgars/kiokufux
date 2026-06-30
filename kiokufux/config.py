@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
-WORKSPACE_NAME = ".fotofux"
+WORKSPACE_NAME = ".kiokufux"
 CATALOG_NAME = "catalog.sqlite"
 
 

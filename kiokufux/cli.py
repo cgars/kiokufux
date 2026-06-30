@@ -17,18 +17,18 @@ def _catalog(root: Path) -> tuple[Path, Catalog]:
 
 
 def _logger(ws: Path) -> logging.Logger:
-    logging.basicConfig(filename=ws / "logs" / "fotofux.log", level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    return logging.getLogger("fotofux")
+    logging.basicConfig(filename=ws / "logs" / "kiokufux.log", level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    return logging.getLogger("kiokufux")
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="fotofux"); sub = p.add_subparsers(dest="cmd", required=True)
+    p = argparse.ArgumentParser(prog="kiokufux"); sub = p.add_subparsers(dest="cmd", required=True)
     for name in ["init", "scan", "thumbnails", "embed", "export-sidecars"]:
         sp = sub.add_parser(name); sp.add_argument("path", type=Path)
     s = sub.add_parser("search"); s.add_argument("path", type=Path); s.add_argument("query"); s.add_argument("--top-k", type=int, default=10)
     args = p.parse_args(argv); root = args.path.expanduser().resolve()
     if args.cmd == "init":
-        ws = ensure_workspace(root); Catalog(catalog_path(root)).init_schema(); print(f"Initialized Fotofux workspace at {ws}"); return 0
+        ws = ensure_workspace(root); Catalog(catalog_path(root)).init_schema(); print(f"Initialized KiokuFux workspace at {ws}"); return 0
     ws, cat = _catalog(root); logger = _logger(ws)
     with cat:
         if args.cmd == "scan":

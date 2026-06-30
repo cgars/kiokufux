@@ -1,8 +1,8 @@
-from fotofux._np import np
-from fotofux.catalog import Catalog, now_iso
-from fotofux.embeddings import FakeEmbeddingBackend
-from fotofux.models import Embedding, Photo
-from fotofux.search import search
+from kiokufux._np import np
+from kiokufux.catalog import Catalog, now_iso
+from kiokufux.embeddings import FakeEmbeddingBackend
+from kiokufux.models import Embedding, Photo
+from kiokufux.search import search
 
 
 def test_search_ranking_with_fake_backend(tmp_path):

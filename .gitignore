@@ -18,10 +18,10 @@ build/
 dist/
 *.egg-info/
 
-# Local Fotofux generated workspace/assets
-.fotofux/
-**/.fotofux/
-*.fotofux.json
+# Local KiokuFux generated workspace/assets
+.kiokufux/
+**/.kiokufux/
+*.kiokufux.json
 
 # Local/editor files
 .DS_Store

@@ -1,5 +1,5 @@
-from fotofux.catalog import Catalog
-from fotofux.models import Photo
+from kiokufux.catalog import Catalog
+from kiokufux.models import Photo
 
 
 def test_catalog_insert_update_and_missing(tmp_path):

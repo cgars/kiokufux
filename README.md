@@ -63,6 +63,18 @@ The workspace is created at `./photos/.kiokufux/`:
   logs/
 ```
 
+### Embedding backend configuration
+
+By default, `kiokufux embed` and `kiokufux search` try OpenCLIP first and fall back to the lightweight local backend if OpenCLIP is unavailable. You can force a backend or choose a specific OpenCLIP model/weights pair:
+
+```bash
+kiokufux embed ./photos --embedding-backend openclip --openclip-model ViT-L-14 --openclip-pretrained datacomp_xl_s13b_b90k
+kiokufux search ./photos "church" --embedding-backend openclip --openclip-model ViT-L-14 --openclip-pretrained datacomp_xl_s13b_b90k
+kiokufux embed ./photos --embedding-backend simple
+```
+
+The same values can also be supplied with `KIOKUFUX_OPENCLIP_MODEL` and `KIOKUFUX_OPENCLIP_PRETRAINED`. Use the same backend/model options for search that you used when generating embeddings.
+
 ## Sidecars
 
 `kiokufux export-sidecars ./photos` writes files named like `image.jpg.kiokufux.json` next to each indexed image. Sidecars use schema `kiokufux.sidecar.v1` and include IDs, source paths, hashes, extracted metadata, semantic status, and review state.

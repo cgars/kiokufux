@@ -66,6 +66,30 @@ The workspace is created at `./photos/.kiokufux/`:
   logs/
 ```
 
+## Configuration
+
+KiokuFux writes an AktenFuchs-style TOML configuration file at `.kiokufux/config.toml` during `kiokufux init`. CLI flags override configuration values for a single run. Example:
+
+```toml
+[thumbnails]
+max_size = 512
+
+[embeddings]
+backend = "auto"
+openclip_model = "ViT-B-32"
+openclip_pretrained = "laion2b_s34b_b79k"
+
+[search]
+top_k = 10
+min_raw_score = 0.20
+min_robust_z = 1.0
+
+[logging]
+verbose = 0
+```
+
+Use the config file for stable project defaults, and command flags such as `--top-k`, `--embedding-backend`, `--openclip-model`, or `-v` for one-off overrides.
+
 ### Embedding backend configuration
 
 By default, `kiokufux embed` and `kiokufux search` try OpenCLIP first and fall back to the lightweight local backend if OpenCLIP is unavailable. You can force a backend or choose a specific OpenCLIP model/weights pair:

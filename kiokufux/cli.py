@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from .catalog import Catalog
-from .config import catalog_path, ensure_workspace
+from .config import KiokuFuxConfig, catalog_path, ensure_workspace, load_config, write_default_config
 from .embeddings import backend_from_options, generate_embeddings
 from .models import SearchResult
 from .scanner import scan as scan_folder
@@ -50,17 +50,23 @@ def _setup_logging(ws: Path, verbose: int = 0) -> logging.Logger:
 
 
 def _add_embedding_options(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--embedding-backend", choices=["auto", "openclip", "simple"], default="auto")
+    parser.add_argument("--embedding-backend", choices=["auto", "openclip", "simple"], default=None)
     parser.add_argument("--openclip-model", help="OpenCLIP model architecture, e.g. ViT-B-32")
     parser.add_argument("--openclip-pretrained", help="OpenCLIP pretrained weights tag, e.g. laion2b_s34b_b79k")
 
 
-def _embedding_backend(args: argparse.Namespace):
-    return backend_from_options(args.embedding_backend, args.openclip_model, args.openclip_pretrained)
+def _embedding_backend(args: argparse.Namespace, config: KiokuFuxConfig):
+    backend = args.embedding_backend or config.embeddings.backend
+    model = args.openclip_model or config.embeddings.openclip_model
+    pretrained = args.openclip_pretrained or config.embeddings.openclip_pretrained
+    return backend_from_options(backend, model, pretrained)
 
 
-def _privacy_notice(args: argparse.Namespace) -> str:
-    backend = getattr(args, "embedding_backend", None)
+def _privacy_notice(args: argparse.Namespace, config: KiokuFuxConfig | None = None) -> str:
+    if getattr(args, "cmd", None) not in {"embed", "search"}:
+        return PRIVACY_LOCAL_NOTICE
+    configured_backend = config.embeddings.backend if config is not None else None
+    backend = getattr(args, "embedding_backend", None) or configured_backend
     if backend in {"auto", "openclip"}:
         return OPENCLIP_DOWNLOAD_NOTICE
     return PRIVACY_LOCAL_NOTICE
@@ -108,10 +114,10 @@ def _build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("search")
     s.add_argument("path", type=Path)
     s.add_argument("query")
-    s.add_argument("--top-k", type=int, default=10)
+    s.add_argument("--top-k", type=int)
     s.add_argument("--summary", action="store_true", help="Only show search statistics and image file name")
-    s.add_argument("--min-raw-score", type=float, default=0.20, help="Minimum raw similarity required for confident matches")
-    s.add_argument("--min-robust-z", type=float, default=1.0, help="Minimum robust z-score required for confident matches")
+    s.add_argument("--min-raw-score", type=float, help="Minimum raw similarity required for confident matches")
+    s.add_argument("--min-robust-z", type=float, help="Minimum robust z-score required for confident matches")
     _add_embedding_options(s)
     return parser
 
@@ -124,14 +130,19 @@ def main(argv: list[str] | None = None) -> int:
     args.verbose = max(args.verbose, extracted_verbose)
     root = args.path.expanduser().resolve()
     ws = ensure_workspace(root)
+    config = load_config(root)
+    args.verbose = max(args.verbose, config.logging.verbose)
     logger = _setup_logging(ws, args.verbose)
     logger.debug("Parsed arguments: %s", args)
-    print(_privacy_notice(args))
+    print(_privacy_notice(args, config))
 
     if args.cmd == "init":
         Catalog(catalog_path(root)).init_schema()
+        config_file = write_default_config(root)
         logger.info("Initialized KiokuFux workspace at %s", ws)
+        logger.info("Wrote KiokuFux config at %s", config_file)
         print(f"Initialized KiokuFux workspace at {ws}")
+        print(f"Configuration file: {config_file}")
         return 0
 
     cat = Catalog(catalog_path(root))
@@ -143,21 +154,21 @@ def main(argv: list[str] | None = None) -> int:
             logger.info("Scan complete: %s indexed/updated, %s errors", indexed, errors)
             print(f"Scan complete: {indexed} indexed/updated, {errors} errors")
         elif args.cmd == "thumbnails":
-            generated = generate_thumbnails(cat, ws)
+            generated = generate_thumbnails(cat, ws, max_size=config.thumbnails.max_size)
             logger.info("Generated %s thumbnails", generated)
             print(f"Generated {generated} thumbnails")
         elif args.cmd == "embed":
-            generated = generate_embeddings(cat, ws, _embedding_backend(args))
+            generated = generate_embeddings(cat, ws, _embedding_backend(args, config))
             logger.info("Generated %s embeddings", generated)
             print(f"Generated {generated} embeddings")
         elif args.cmd == "search":
             results = run_search(
                 cat,
                 args.query,
-                args.top_k,
-                _embedding_backend(args),
-                min_raw_score=args.min_raw_score,
-                min_robust_z=args.min_robust_z,
+                (args.top_k if args.top_k is not None else config.search.top_k),
+                _embedding_backend(args, config),
+                min_raw_score=(args.min_raw_score if args.min_raw_score is not None else config.search.min_raw_score),
+                min_robust_z=(args.min_robust_z if args.min_robust_z is not None else config.search.min_robust_z),
             )
             logger.info("Search returned %s results for query %r", len(results), args.query)
             if results and not results[0].confidence_gate_passed:

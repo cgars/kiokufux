@@ -100,3 +100,16 @@ def test_extract_verbose_args_accepts_compact_debug_flag_after_options(tmp_path)
     assert verbose == 2
     assert args.cmd == "search"
     assert args.summary is True
+
+
+def test_privacy_notice_uses_configured_embedding_backend():
+    from argparse import Namespace
+    from kiokufux.cli import OPENCLIP_DOWNLOAD_NOTICE, PRIVACY_LOCAL_NOTICE, _privacy_notice
+    from kiokufux.config import KiokuFuxConfig
+
+    cfg = KiokuFuxConfig()
+    cfg.embeddings.backend = "auto"
+    assert _privacy_notice(Namespace(cmd="init", embedding_backend=None), cfg) == PRIVACY_LOCAL_NOTICE
+    assert _privacy_notice(Namespace(cmd="embed", embedding_backend=None), cfg) == OPENCLIP_DOWNLOAD_NOTICE
+    cfg.embeddings.backend = "simple"
+    assert _privacy_notice(Namespace(cmd="embed", embedding_backend=None), cfg) == PRIVACY_LOCAL_NOTICE

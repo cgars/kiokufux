@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Generated {generate_embeddings(cat, ws, _embedding_backend(args))} embeddings")
         elif args.cmd == "search":
             for i, r in enumerate(run_search(cat, args.query, args.top_k, _embedding_backend(args)), 1):
-                print(f"{i}\tscore={r.score:.4f}\tpath={r.source_path}\tthumb={r.thumbnail_path}\tmetadata={r.metadata_summary}")
+                print(f"{i}\traw_score={r.score:.4f}\tmatch={r.match_label}\ttop_percent={r.top_percent:.1f}\tnormalized_relative={r.normalized_score:.4f}\tpath={r.source_path}\tthumb={r.thumbnail_path}\tmetadata={r.metadata_summary}")
         elif args.cmd == "export-sidecars":
             print(f"Exported {export_sidecars(cat)} sidecars")
     return 0

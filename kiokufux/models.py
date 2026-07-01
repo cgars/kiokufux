@@ -45,3 +45,8 @@ class SearchResult:
     source_path: Path
     thumbnail_path: str | None
     metadata_summary: dict[str, Any]
+    rank: int | None = None
+    total_ranked: int | None = None
+    top_percent: float | None = None
+    normalized_score: float | None = None
+    match_label: str | None = None

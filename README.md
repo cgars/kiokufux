@@ -75,6 +75,10 @@ kiokufux embed ./photos --embedding-backend simple
 
 The same values can also be supplied with `KIOKUFUX_OPENCLIP_MODEL` and `KIOKUFUX_OPENCLIP_PRETRAINED`. Use the same backend/model options for search that you used when generating embeddings.
 
+## Search score interpretation
+
+Search results preserve the raw cosine similarity as `raw_score`, then add query-relative display fields: `rank`, `top_percent`, `normalized_relative`, and a plain-language match label such as `very good match`, `good match`, `possible match`, or `weak match`. The normalized relative value is only an ordering aid within the current query result set; it is not a probability and must not be read as “87% match.”
+
 ## Sidecars
 
 `kiokufux export-sidecars ./photos` writes files named like `image.jpg.kiokufux.json` next to each indexed image. Sidecars use schema `kiokufux.sidecar.v1` and include IDs, source paths, hashes, extracted metadata, semantic status, and review state.

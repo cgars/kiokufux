@@ -80,6 +80,21 @@ def _format_search_result(index: int, result: SearchResult, summary: bool = Fals
     )
 
 
+def _extract_verbose_args(argv: list[str]) -> tuple[list[str], int]:
+    cleaned: list[str] = []
+    verbose = 0
+    for arg in argv:
+        if arg == "--verbose":
+            verbose += 1
+        elif arg == "-v":
+            verbose += 1
+        elif arg.startswith("-v") and set(arg[1:]) == {"v"}:
+            verbose += len(arg) - 1
+        else:
+            cleaned.append(arg)
+    return cleaned, verbose
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="kiokufux")
     parser.add_argument("-v", "--verbose", action="count", default=0, help="Print verbose log messages to stderr; use -vv for debug logs")
@@ -102,8 +117,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    raw_argv = sys.argv[1:] if argv is None else argv
+    cleaned_argv, extracted_verbose = _extract_verbose_args(raw_argv)
     parser = _build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(cleaned_argv)
+    args.verbose = max(args.verbose, extracted_verbose)
     root = args.path.expanduser().resolve()
     ws = ensure_workspace(root)
     logger = _setup_logging(ws, args.verbose)

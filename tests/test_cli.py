@@ -79,3 +79,24 @@ def test_parser_accepts_verbose_flag_before_command(tmp_path):
 
     assert args.verbose == 1
     assert args.cmd == "scan"
+
+
+def test_extract_verbose_args_accepts_verbose_after_subcommand(tmp_path):
+    from kiokufux.cli import _build_parser, _extract_verbose_args
+
+    cleaned, verbose = _extract_verbose_args(["scan", str(tmp_path), "-v"])
+    args = _build_parser().parse_args(cleaned)
+
+    assert verbose == 1
+    assert args.cmd == "scan"
+
+
+def test_extract_verbose_args_accepts_compact_debug_flag_after_options(tmp_path):
+    from kiokufux.cli import _build_parser, _extract_verbose_args
+
+    cleaned, verbose = _extract_verbose_args(["search", str(tmp_path), "church", "--summary", "-vv"])
+    args = _build_parser().parse_args(cleaned)
+
+    assert verbose == 2
+    assert args.cmd == "search"
+    assert args.summary is True

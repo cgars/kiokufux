@@ -52,3 +52,30 @@ def test_format_search_result_full_includes_path_thumb_and_metadata():
     assert "path=/archive/family/church.jpg" in line
     assert "thumb=/archive/.kiokufux/thumbnails/id.jpg" in line
     assert "metadata={'width': 100}" in line
+
+
+def test_privacy_notice_for_local_only_command():
+    from argparse import Namespace
+    from kiokufux.cli import PRIVACY_LOCAL_NOTICE, _privacy_notice
+
+    assert _privacy_notice(Namespace(cmd="scan")) == PRIVACY_LOCAL_NOTICE
+
+
+def test_privacy_notice_for_openclip_backend_mentions_weight_download_only():
+    from argparse import Namespace
+    from kiokufux.cli import OPENCLIP_DOWNLOAD_NOTICE, _privacy_notice
+
+    notice = _privacy_notice(Namespace(cmd="embed", embedding_backend="openclip"))
+
+    assert notice == OPENCLIP_DOWNLOAD_NOTICE
+    assert "no photo, metadata, or query data will be sent" in notice
+    assert "download model weights" in notice
+
+
+def test_parser_accepts_verbose_flag_before_command(tmp_path):
+    from kiokufux.cli import _build_parser
+
+    args = _build_parser().parse_args(["-v", "scan", str(tmp_path)])
+
+    assert args.verbose == 1
+    assert args.cmd == "scan"

@@ -33,12 +33,13 @@ If OpenCLIP is unavailable, KiokuFux falls back to a dependency-light local embe
 ## CLI usage
 
 ```bash
-kiokufux init PATH
+kiokufux -v init PATH
 kiokufux scan PATH
 kiokufux thumbnails PATH
 kiokufux embed PATH
 kiokufux search PATH "query text"
 kiokufux search PATH "query text" --summary
+kiokufux -v search PATH "query text" --summary
 kiokufux export-sidecars PATH
 ```
 
@@ -76,6 +77,17 @@ kiokufux embed ./photos --embedding-backend simple
 ```
 
 The same values can also be supplied with `KIOKUFUX_OPENCLIP_MODEL` and `KIOKUFUX_OPENCLIP_PRETRAINED`. Use the same backend/model options for search that you used when generating embeddings.
+
+## Logging and privacy notices
+
+KiokuFux writes command logs to `.kiokufux/logs/kiokufux.log`. Use `-v` to mirror informational logs to stderr, or `-vv` for debug logs:
+
+```bash
+kiokufux -v scan ./photos
+kiokufux -vv search ./photos "church" --summary
+```
+
+Every CLI command prints an online-services notice before doing work. The MVP does not send photo, metadata, or query data to online services. If the OpenCLIP backend is selected, OpenCLIP may contact the network only to download model weights when they are not already cached.
 
 ## Search score interpretation
 

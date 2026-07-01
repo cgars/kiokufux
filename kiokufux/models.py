@@ -49,4 +49,6 @@ class SearchResult:
     total_ranked: int | None = None
     top_percent: float | None = None
     normalized_score: float | None = None
+    robust_z_score: float | None = None
+    confidence_gate_passed: bool | None = None
     match_label: str | None = None

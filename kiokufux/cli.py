@@ -35,7 +35,8 @@ def _embedding_backend(args: argparse.Namespace):
 def _format_search_result(index: int, result: SearchResult, summary: bool = False) -> str:
     stats = (
         f"{index}\traw_score={result.score:.4f}\tmatch={result.match_label}"
-        f"\ttop_percent={result.top_percent:.1f}\tnormalized_relative={result.normalized_score:.4f}"
+        f"\ttop_percent={result.top_percent:.1f}\trobust_z={result.robust_z_score:.2f}"
+        f"\tnormalized_relative={result.normalized_score:.4f}"
     )
     if summary:
         return f"{stats}\tname={result.source_path.name}"
@@ -50,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
     for name in ["init", "scan", "thumbnails", "export-sidecars"]:
         sp = sub.add_parser(name); sp.add_argument("path", type=Path)
     e = sub.add_parser("embed"); e.add_argument("path", type=Path); _add_embedding_options(e)
-    s = sub.add_parser("search"); s.add_argument("path", type=Path); s.add_argument("query"); s.add_argument("--top-k", type=int, default=10); s.add_argument("--summary", action="store_true", help="Only show search statistics and image file name"); _add_embedding_options(s)
+    s = sub.add_parser("search"); s.add_argument("path", type=Path); s.add_argument("query"); s.add_argument("--top-k", type=int, default=10); s.add_argument("--summary", action="store_true", help="Only show search statistics and image file name"); s.add_argument("--min-raw-score", type=float, default=0.20, help="Minimum raw similarity required for confident matches"); s.add_argument("--min-robust-z", type=float, default=1.0, help="Minimum robust z-score required for confident matches"); _add_embedding_options(s)
     args = p.parse_args(argv); root = args.path.expanduser().resolve()
     if args.cmd == "init":
         ws = ensure_workspace(root); Catalog(catalog_path(root)).init_schema(); print(f"Initialized KiokuFux workspace at {ws}"); return 0
@@ -63,7 +64,11 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "embed":
             print(f"Generated {generate_embeddings(cat, ws, _embedding_backend(args))} embeddings")
         elif args.cmd == "search":
-            for i, r in enumerate(run_search(cat, args.query, args.top_k, _embedding_backend(args)), 1):
+            results = run_search(cat, args.query, args.top_k, _embedding_backend(args), min_raw_score=args.min_raw_score, min_robust_z=args.min_robust_z)
+            if results and not results[0].confidence_gate_passed:
+                print("No confident matches found.")
+                print("Showing closest available results.")
+            for i, r in enumerate(results, 1):
                 print(_format_search_result(i, r, summary=args.summary))
         elif args.cmd == "export-sidecars":
             print(f"Exported {export_sidecars(cat)} sidecars")

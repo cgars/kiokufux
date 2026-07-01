@@ -1,10 +1,12 @@
+from pathlib import Path
+
 import pytest
 
 from kiokufux._np import np
 from kiokufux.catalog import Catalog, now_iso
 from kiokufux.embeddings import FakeEmbeddingBackend
-from kiokufux.models import Embedding, Photo
-from kiokufux.search import search
+from kiokufux.models import Embedding, Photo, SearchResult
+from kiokufux.search import normalize_search_results, search
 
 
 def test_search_ranking_with_fake_backend(tmp_path):
@@ -15,7 +17,7 @@ def test_search_ranking_with_fake_backend(tmp_path):
         vec = b.embed_text("church" if pid == "church" else "dog")
         ep = tmp_path / f"{pid}.npy"; np.save(ep, vec)
         c.upsert_embedding(Embedding(pid, b.model_name, b.model_version, b.dimension, str(ep), now_iso()))
-    results = search(c, "church", backend=b)
+    results = search(c, "church", backend=b, min_robust_z=0.0)
     assert results[0].photo_id == "church"
 
 
@@ -40,12 +42,44 @@ def test_search_results_include_query_relative_normalization(tmp_path):
         ep = tmp_path / f"{pid}.npy"; np.save(ep, vec)
         c.upsert_embedding(Embedding(pid, b.model_name, b.model_version, b.dimension, str(ep), now_iso()))
 
-    results = search(c, "church", backend=b)
+    results = search(c, "church", backend=b, min_robust_z=0.0)
 
     assert [r.rank for r in results] == [1, 2, 3]
     assert all(r.score is not None for r in results)
     assert results[0].normalized_score == 1.0
     assert results[0].match_label == "very good match"
+    assert results[0].confidence_gate_passed is True
     assert results[0].top_percent == pytest.approx(100 / 3)
     assert results[-1].normalized_score == 0.0
-    assert results[-1].match_label == "weak match"
+    assert results[-1].confidence_gate_passed is False
+    assert results[-1].match_label == "low confidence"
+
+
+def test_confidence_gate_marks_least_wrong_results_as_closest_available():
+    results = [
+        SearchResult("a", 0.10, Path("a.jpg"), None, {}),
+        SearchResult("b", 0.09, Path("b.jpg"), None, {}),
+        SearchResult("c", 0.08, Path("c.jpg"), None, {}),
+    ]
+
+    ranked = normalize_search_results(results)
+
+    assert ranked[0].rank == 1
+    assert ranked[0].top_percent == pytest.approx(100 / 3)
+    assert ranked[0].match_label == "closest available · low confidence"
+    assert ranked[0].confidence_gate_passed is False
+
+
+def test_confidence_gate_requires_unusual_best_score():
+    results = [
+        SearchResult("a", 0.50, Path("a.jpg"), None, {}),
+        SearchResult("b", 0.49, Path("b.jpg"), None, {}),
+        SearchResult("c", 0.48, Path("c.jpg"), None, {}),
+    ]
+
+    ranked = normalize_search_results(results)
+
+    assert ranked[0].score == 0.50
+    assert ranked[0].robust_z_score < 1.0
+    assert ranked[0].match_label == "closest available · low confidence"
+    assert ranked[0].confidence_gate_passed is False

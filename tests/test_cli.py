@@ -15,6 +15,8 @@ def test_format_search_result_summary_only_includes_stats_and_name():
         total_ranked=4,
         top_percent=25.0,
         normalized_score=1.0,
+        robust_z_score=2.5,
+        confidence_gate_passed=True,
         match_label="very good match",
     )
 
@@ -23,6 +25,7 @@ def test_format_search_result_summary_only_includes_stats_and_name():
     assert "raw_score=0.4200" in line
     assert "match=very good match" in line
     assert "top_percent=25.0" in line
+    assert "robust_z=2.50" in line
     assert "normalized_relative=1.0000" in line
     assert "name=church.jpg" in line
     assert "path=" not in line
@@ -39,6 +42,8 @@ def test_format_search_result_full_includes_path_thumb_and_metadata():
         metadata_summary={"width": 100},
         top_percent=25.0,
         normalized_score=1.0,
+        robust_z_score=2.5,
+        confidence_gate_passed=True,
         match_label="very good match",
     )
 

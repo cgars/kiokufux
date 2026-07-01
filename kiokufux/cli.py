@@ -9,6 +9,7 @@ from .thumbnails import generate_thumbnails
 from .embeddings import backend_from_options, generate_embeddings
 from .search import search as run_search
 from .sidecar import export_sidecars
+from .models import SearchResult
 
 
 def _catalog(root: Path) -> tuple[Path, Catalog]:
@@ -31,12 +32,25 @@ def _embedding_backend(args: argparse.Namespace):
     return backend_from_options(args.embedding_backend, args.openclip_model, args.openclip_pretrained)
 
 
+def _format_search_result(index: int, result: SearchResult, summary: bool = False) -> str:
+    stats = (
+        f"{index}\traw_score={result.score:.4f}\tmatch={result.match_label}"
+        f"\ttop_percent={result.top_percent:.1f}\tnormalized_relative={result.normalized_score:.4f}"
+    )
+    if summary:
+        return f"{stats}\tname={result.source_path.name}"
+    return (
+        f"{stats}\tpath={result.source_path}\tthumb={result.thumbnail_path}"
+        f"\tmetadata={result.metadata_summary}"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="kiokufux"); sub = p.add_subparsers(dest="cmd", required=True)
     for name in ["init", "scan", "thumbnails", "export-sidecars"]:
         sp = sub.add_parser(name); sp.add_argument("path", type=Path)
     e = sub.add_parser("embed"); e.add_argument("path", type=Path); _add_embedding_options(e)
-    s = sub.add_parser("search"); s.add_argument("path", type=Path); s.add_argument("query"); s.add_argument("--top-k", type=int, default=10); _add_embedding_options(s)
+    s = sub.add_parser("search"); s.add_argument("path", type=Path); s.add_argument("query"); s.add_argument("--top-k", type=int, default=10); s.add_argument("--summary", action="store_true", help="Only show search statistics and image file name"); _add_embedding_options(s)
     args = p.parse_args(argv); root = args.path.expanduser().resolve()
     if args.cmd == "init":
         ws = ensure_workspace(root); Catalog(catalog_path(root)).init_schema(); print(f"Initialized KiokuFux workspace at {ws}"); return 0
@@ -50,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Generated {generate_embeddings(cat, ws, _embedding_backend(args))} embeddings")
         elif args.cmd == "search":
             for i, r in enumerate(run_search(cat, args.query, args.top_k, _embedding_backend(args)), 1):
-                print(f"{i}\traw_score={r.score:.4f}\tmatch={r.match_label}\ttop_percent={r.top_percent:.1f}\tnormalized_relative={r.normalized_score:.4f}\tpath={r.source_path}\tthumb={r.thumbnail_path}\tmetadata={r.metadata_summary}")
+                print(_format_search_result(i, r, summary=args.summary))
         elif args.cmd == "export-sidecars":
             print(f"Exported {export_sidecars(cat)} sidecars")
     return 0

@@ -38,6 +38,7 @@ kiokufux scan PATH
 kiokufux thumbnails PATH
 kiokufux embed PATH
 kiokufux search PATH "query text"
+kiokufux search PATH "query text" --summary
 kiokufux export-sidecars PATH
 ```
 
@@ -49,6 +50,7 @@ kiokufux scan ./photos
 kiokufux thumbnails ./photos
 kiokufux embed ./photos
 kiokufux search ./photos "red car in front of a house"
+kiokufux search ./photos "red car in front of a house" --summary
 kiokufux export-sidecars ./photos
 ```
 
@@ -77,7 +79,7 @@ The same values can also be supplied with `KIOKUFUX_OPENCLIP_MODEL` and `KIOKUFU
 
 ## Search score interpretation
 
-Search results preserve the raw cosine similarity as `raw_score`, then add query-relative display fields: `rank`, `top_percent`, `normalized_relative`, and a plain-language match label such as `very good match`, `good match`, `possible match`, or `weak match`. The normalized relative value is only an ordering aid within the current query result set; it is not a probability and must not be read as “87% match.”
+Search results preserve the raw cosine similarity as `raw_score`, then add query-relative display fields: `rank`, `top_percent`, `normalized_relative`, and a plain-language match label such as `very good match`, `good match`, `possible match`, or `weak match`. The normalized relative value is only an ordering aid within the current query result set; it is not a probability and must not be read as “87% match.” Use `kiokufux search PATH "query text" --summary` to print only these search statistics plus the image file name.
 
 ## Sidecars
 

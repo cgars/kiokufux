@@ -92,7 +92,7 @@ openclip_model = "ViT-B-32"
 openclip_pretrained = "laion2b_s34b_b79k"
 
 [autotagging]
-candidate_tags = "dog, cat, cow, horse, bird, bike, car, church, house, garden, party, lake, beach, snow, mountain, family"
+candidate_tags = "person, man, woman, child, baby, ... , text_in_image, handwriting"
 top_k = 5
 min_score = 0.20
 
@@ -105,7 +105,7 @@ min_robust_z = 1.0
 verbose = 0
 ```
 
-Use the config file for stable project defaults, and command flags such as `--top-k`, `--embedding-backend`, `--openclip-model`, or `-v` for one-off overrides.
+Use the config file for stable project defaults, and command flags such as `--top-k`, `--embedding-backend`, `--openclip-model`, or `-v` for one-off overrides. The generated config contains the full 100-tag default auto-tag vocabulary.
 
 ### Embedding backend configuration
 

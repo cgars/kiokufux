@@ -1,4 +1,5 @@
 from kiokufux.config import config_from_mapping, load_config, write_default_config
+from kiokufux.default_tags import DEFAULT_AUTOTAG_CANDIDATE_TAGS
 
 
 def test_write_and_load_default_config(tmp_path):
@@ -12,7 +13,8 @@ def test_write_and_load_default_config(tmp_path):
     assert cfg.embeddings.backend == "auto"
     assert cfg.search.top_k == 10
     assert cfg.autotagging.top_k == 5
-    assert "dog" in cfg.autotagging.candidate_tags
+    tags = [tag.strip() for tag in cfg.autotagging.candidate_tags.split(",")]
+    assert tags == DEFAULT_AUTOTAG_CANDIDATE_TAGS
 
 
 def test_config_from_mapping_parses_aktenfuchs_style_sections():

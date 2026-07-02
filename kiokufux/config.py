@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .default_tags import default_candidate_tags_text
+
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
 WORKSPACE_NAME = ".kiokufux"
 CATALOG_NAME = "catalog.sqlite"
@@ -77,7 +79,8 @@ def config_path(root: Path, output_dir: Path | None = None, config: KiokuFuxConf
 
 
 def default_config_text() -> str:
-    return """# KiokuFux configuration
+    candidate_tags = default_candidate_tags_text()
+    return f"""# KiokuFux configuration
 # Values here are local-only defaults. CLI flags override these values for one run.
 
 [workspace]
@@ -97,7 +100,7 @@ min_raw_score = 0.20
 min_robust_z = 1.0
 
 [autotagging]
-candidate_tags = "dog, cat, cow, horse, bird, bike, car, church, house, garden, party, lake, beach, snow, mountain, family"
+candidate_tags = "{candidate_tags}"
 top_k = 5
 min_score = 0.20
 
@@ -149,7 +152,7 @@ def config_from_mapping(data: dict[str, Any]) -> KiokuFuxConfig:
     if "candidate_tags" in autotagging:
         value = autotagging["candidate_tags"]
         if isinstance(value, list):
-            cfg.autotagging.candidate_tags = ", ".join(str(item) for item in value)
+            cfg.autotagging.candidate_tags = "{candidate_tags}".join(str(item) for item in value)
         else:
             cfg.autotagging.candidate_tags = str(value)
     if "top_k" in autotagging:

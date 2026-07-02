@@ -7,12 +7,13 @@ from .catalog import Catalog
 SCHEMA = "kiokufux.sidecar.v1"
 
 
-def sidecar_document(photo, embedding_model: str | None = None) -> dict:
+def sidecar_document(photo, embedding_model: str | None = None, tags: list | None = None) -> dict:
+    tags = tags or []
     return {
         "schema": SCHEMA, "photo_id": photo.photo_id, "source_path": str(photo.source_path), "file_hash": photo.file_hash,
         "metadata": {"width": photo.width, "height": photo.height, "datetime_original": photo.exif_datetime_original, "gps": {"lat": photo.exif_gps_lat, "lon": photo.exif_gps_lon}},
-        "semantic": {"embedding_model": embedding_model, "auto_tags": [], "caption": None, "status": photo.embedding_status},
-        "review": {"state": "unreviewed"},
+        "semantic": {"embedding_model": embedding_model, "auto_tags": [t.tag for t in tags if t.source == "auto"], "caption": None, "status": photo.embedding_status},
+        "review": {"state": "unreviewed", "tags": [t.tag for t in tags if t.source == "manual"]},
     }
 
 
@@ -21,6 +22,6 @@ def export_sidecars(catalog: Catalog, export_dir: Path | None = None) -> int:
     if export_dir: export_dir.mkdir(parents=True, exist_ok=True)
     for photo in catalog.list_photos():
         target = (export_dir / f"{photo.photo_id}.kiokufux.json") if export_dir else photo.source_path.with_name(photo.source_path.name + ".kiokufux.json")
-        target.write_text(json.dumps(sidecar_document(photo), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        target.write_text(json.dumps(sidecar_document(photo, tags=catalog.list_tags(photo.photo_id)), indent=2, sort_keys=True) + "\n", encoding="utf-8")
         count += 1
     return count

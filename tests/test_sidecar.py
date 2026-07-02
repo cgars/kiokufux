@@ -15,5 +15,10 @@ def test_export_sidecars(tmp_path):
     db = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite"); db.init_schema()
     img = tmp_path / "x.jpg"; img.write_text("not image")
     db.upsert_photo(Photo("id", img, "x.jpg", "hash"))
+    db.add_tag("id", "family")
+    db.add_tag("id", "dog", source="auto")
     assert export_sidecars(db) == 1
-    assert json.loads((tmp_path / "x.jpg.kiokufux.json").read_text())["photo_id"] == "id"
+    doc = json.loads((tmp_path / "x.jpg.kiokufux.json").read_text())
+    assert doc["photo_id"] == "id"
+    assert doc["review"]["tags"] == ["family"]
+    assert doc["semantic"]["auto_tags"] == ["dog"]

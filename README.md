@@ -40,6 +40,9 @@ kiokufux embed PATH
 kiokufux search PATH "query text"
 kiokufux search PATH "query text" --summary
 kiokufux -v search PATH "query text" --summary
+kiokufux tag PATH PHOTO_ID "family party"
+kiokufux tags PATH [PHOTO_ID]
+kiokufux untag PATH PHOTO_ID "family party"
 kiokufux export-sidecars PATH
 ```
 
@@ -52,6 +55,8 @@ kiokufux thumbnails ./photos
 kiokufux embed ./photos
 kiokufux search ./photos "red car in front of a house"
 kiokufux search ./photos "red car in front of a house" --summary
+kiokufux tag ./photos PHOTO_ID_FROM_SEARCH "family party"
+kiokufux tags ./photos PHOTO_ID_FROM_SEARCH
 kiokufux export-sidecars ./photos
 ```
 
@@ -117,6 +122,18 @@ Every CLI command prints an online-services notice before doing work. The MVP do
 ## Search score interpretation
 
 Search results preserve the raw cosine similarity as `raw_score`, then add query-relative display fields: `rank`, `top_percent`, `robust_z`, `normalized_relative`, and a plain-language match label. Rank decides ordering, while a confidence gate decides whether the result is trustworthy: the best result must clear both a minimum raw-score threshold and a minimum robust z-score threshold (configurable with `--min-raw-score` and `--min-robust-z`). If the gate fails, KiokuFux prints `No confident matches found.` and `Showing closest available results.` and labels the best item `closest available · low confidence` rather than pretending it is a good match. The normalized relative value is only an ordering aid within the current query result set; it is not a probability and must not be read as “87% match.” Use `kiokufux search PATH "query text" --summary` to print only these search statistics plus the image file name.
+
+## Tagging
+
+MVP 1 supports local catalog tags without modifying original images. Use a `photo_id` from scan/search results:
+
+```bash
+kiokufux tag ./photos PHOTO_ID "family party" dog
+kiokufux tags ./photos PHOTO_ID
+kiokufux untag ./photos PHOTO_ID dog
+```
+
+Manual tags are stored in SQLite and exported into sidecars under `review.tags`. Auto tags, when added by code with source `auto`, are exported under `semantic.auto_tags`.
 
 ## Sidecars
 

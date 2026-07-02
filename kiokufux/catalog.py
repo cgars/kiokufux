@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from .models import Embedding, Photo
+from .models import Embedding, Photo, PhotoTag
 
 
 def now_iso() -> str:
@@ -49,6 +49,14 @@ class Catalog:
             CREATE INDEX IF NOT EXISTS idx_photos_relative_path ON photos(relative_path);
             CREATE INDEX IF NOT EXISTS idx_photos_file_hash ON photos(file_hash);
             CREATE INDEX IF NOT EXISTS idx_photos_embedding_status ON photos(embedding_status);
+            CREATE TABLE IF NOT EXISTS photo_tags (
+              photo_id TEXT NOT NULL, tag TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'manual',
+              created_at TEXT NOT NULL,
+              PRIMARY KEY (photo_id, tag, source),
+              FOREIGN KEY (photo_id) REFERENCES photos(photo_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_photo_tags_photo_id ON photo_tags(photo_id);
+            CREATE INDEX IF NOT EXISTS idx_photo_tags_tag ON photo_tags(tag);
             """
         )
         self.conn.commit()
@@ -104,5 +112,39 @@ class Catalog:
         rows = self.conn.execute("SELECT * FROM embeddings WHERE model_name=? AND model_version=?", (model_name, model_version)).fetchall()
         return [Embedding(**dict(r)) for r in rows]
 
+
+    def add_tag(self, photo_id: str, tag: str, source: str = "manual") -> None:
+        normalized = normalize_tag(tag)
+        if not normalized:
+            raise ValueError("Tag cannot be empty")
+        self.conn.execute(
+            "INSERT OR IGNORE INTO photo_tags VALUES (?,?,?,?)",
+            (photo_id, normalized, source, now_iso()),
+        )
+        self.conn.commit()
+
+    def remove_tag(self, photo_id: str, tag: str, source: str | None = None) -> None:
+        normalized = normalize_tag(tag)
+        if source is None:
+            self.conn.execute("DELETE FROM photo_tags WHERE photo_id=? AND tag=?", (photo_id, normalized))
+        else:
+            self.conn.execute("DELETE FROM photo_tags WHERE photo_id=? AND tag=? AND source=?", (photo_id, normalized, source))
+        self.conn.commit()
+
+    def list_tags(self, photo_id: str) -> list[PhotoTag]:
+        rows = self.conn.execute(
+            "SELECT * FROM photo_tags WHERE photo_id=? ORDER BY tag, source",
+            (photo_id,),
+        ).fetchall()
+        return [PhotoTag(**dict(row)) for row in rows]
+
+    def list_all_tags(self) -> list[PhotoTag]:
+        rows = self.conn.execute("SELECT * FROM photo_tags ORDER BY tag, photo_id, source").fetchall()
+        return [PhotoTag(**dict(row)) for row in rows]
+
     def _photo(self, row: sqlite3.Row) -> Photo:
         d = dict(row); d["source_path"] = Path(d["source_path"]); d["missing"] = bool(d["missing"]); return Photo(**d)
+
+
+def normalize_tag(tag: str) -> str:
+    return " ".join(tag.strip().lower().split())

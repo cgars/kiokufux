@@ -108,6 +108,17 @@ def _build_parser() -> argparse.ArgumentParser:
     for name in ["init", "scan", "thumbnails", "export-sidecars"]:
         sp = sub.add_parser(name)
         sp.add_argument("path", type=Path)
+    tag = sub.add_parser("tag")
+    tag.add_argument("path", type=Path)
+    tag.add_argument("photo_id")
+    tag.add_argument("tags", nargs="+")
+    untag = sub.add_parser("untag")
+    untag.add_argument("path", type=Path)
+    untag.add_argument("photo_id")
+    untag.add_argument("tags", nargs="+")
+    tags = sub.add_parser("tags")
+    tags.add_argument("path", type=Path)
+    tags.add_argument("photo_id", nargs="?")
     e = sub.add_parser("embed")
     e.add_argument("path", type=Path)
     _add_embedding_options(e)
@@ -180,6 +191,26 @@ def main(argv: list[str] | None = None) -> int:
             exported = export_sidecars(cat)
             logger.info("Exported %s sidecars", exported)
             print(f"Exported {exported} sidecars")
+        elif args.cmd == "tag":
+            for tag in args.tags:
+                cat.add_tag(args.photo_id, tag)
+            logger.info("Added %s tags to %s", len(args.tags), args.photo_id)
+            print(f"Tagged {args.photo_id}: {', '.join(t.tag for t in cat.list_tags(args.photo_id))}")
+        elif args.cmd == "untag":
+            for tag in args.tags:
+                cat.remove_tag(args.photo_id, tag)
+            logger.info("Removed %s tags from %s", len(args.tags), args.photo_id)
+            remaining = cat.list_tags(args.photo_id)
+            print(f"Tags for {args.photo_id}: {', '.join(t.tag for t in remaining) if remaining else '(none)'}")
+        elif args.cmd == "tags":
+            if args.photo_id:
+                rows = cat.list_tags(args.photo_id)
+                for row in rows:
+                    print(f"{row.photo_id}\t{row.tag}\t{row.source}")
+            else:
+                rows = cat.list_all_tags()
+                for row in rows:
+                    print(f"{row.photo_id}\t{row.tag}\t{row.source}")
     return 0
 
 

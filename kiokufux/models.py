@@ -39,6 +39,14 @@ class Embedding:
 
 
 @dataclass(slots=True)
+class PhotoTag:
+    photo_id: str
+    tag: str
+    source: str
+    created_at: str
+
+
+@dataclass(slots=True)
 class SearchResult:
     photo_id: str
     score: float

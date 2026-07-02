@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kiokufux"
+version = "0.1.0"
+description = "Local-first photo indexing and semantic search prototype"
+requires-python = ">=3.10"
+dependencies = ["Pillow>=10", "numpy>=1.24"]
+
+[project.optional-dependencies]
+clip = ["open_clip_torch", "torch"]
+dev = ["pytest"]
+
+[project.scripts]
+kiokufux = "kiokufux.cli:main"

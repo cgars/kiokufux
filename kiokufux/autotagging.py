@@ -7,11 +7,6 @@ from .embeddings import EmbeddingBackend, default_backend
 from .models import Photo
 from .search import cosine
 
-DEFAULT_CANDIDATE_TAGS = [
-    "dog", "cat", "cow", "horse", "bird", "bike", "bicycle", "car", "truck", "boat",
-    "church", "house", "garden", "party", "lake", "beach", "snow", "mountain", "forest",
-    "baby", "wedding", "birthday", "holiday", "family", "school", "train", "flower",
-]
 DEFAULT_AUTO_TAG_TOP_K = 5
 DEFAULT_AUTO_TAG_MIN_SCORE = 0.20
 
@@ -41,7 +36,7 @@ class EmbeddingAutoTagger:
         min_score: float = DEFAULT_AUTO_TAG_MIN_SCORE,
     ) -> None:
         self.backend = backend or default_backend()
-        self.candidate_tags = normalize_candidate_tags(candidate_tags or DEFAULT_CANDIDATE_TAGS)
+        self.candidate_tags = normalize_candidate_tags(candidate_tags or [])
         self.top_k = top_k
         self.min_score = min_score
 

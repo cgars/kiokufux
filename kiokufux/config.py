@@ -29,7 +29,7 @@ class EmbeddingConfig:
 
 @dataclass(slots=True)
 class AutoTaggingConfig:
-    candidate_tags: str = "dog, cat, cow, horse, bird, bike, car, church, house, garden, party, lake, beach, snow, mountain, family"
+    candidate_tags: str = ""
     top_k: int = 5
     min_score: float = 0.20
 

@@ -145,7 +145,7 @@ kiokufux tags ./photos PHOTO_ID
 kiokufux untag ./photos PHOTO_ID dog
 ```
 
-Manual tags are stored in SQLite and exported into sidecars under `review.tags`. KiokuFux can also generate local AI-assisted tag proposals with `kiokufux auto-tag ./photos`; this uses the configured embedding backend for zero-shot image/text similarity between each photo and candidate tag labels. Proposals remain pending until reviewed with `kiokufux accept-tag` or `kiokufux reject-tag`. Accepted AI proposals are stored as `source=auto` tags and exported under `semantic.auto_tags`; pending/rejected proposals are exported under `review.tag_proposals` for review. No image data is sent to online services for MVP1 auto-tagging, though OpenCLIP may download model weights if selected and uncached.
+Manual tags are stored in SQLite and exported into sidecars under `review.tags`. KiokuFux can also generate local AI-assisted tag proposals with `kiokufux auto-tag ./photos`; this uses the configured embedding backend for zero-shot image/text similarity between each photo and candidate tag labels from `.kiokufux/config.toml` (or `--candidate-tags` for one run). Proposals remain pending until reviewed with `kiokufux accept-tag` or `kiokufux reject-tag`. Accepted AI proposals are stored as `source=auto` tags and exported under `semantic.auto_tags`; pending/rejected proposals are exported under `review.tag_proposals` for review. No image data is sent to online services for MVP1 auto-tagging, though OpenCLIP may download model weights if selected and uncached.
 
 ## Sidecars
 

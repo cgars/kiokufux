@@ -41,6 +41,10 @@ kiokufux search PATH "query text"
 kiokufux search PATH "query text" --summary
 kiokufux -v search PATH "query text" --summary
 kiokufux tag PATH PHOTO_ID "family party"
+kiokufux auto-tag PATH
+kiokufux tag-proposals PATH [PHOTO_ID]
+kiokufux accept-tag PATH PHOTO_ID TAG
+kiokufux reject-tag PATH PHOTO_ID TAG
 kiokufux tags PATH [PHOTO_ID]
 kiokufux untag PATH PHOTO_ID "family party"
 kiokufux export-sidecars PATH
@@ -56,6 +60,9 @@ kiokufux embed ./photos
 kiokufux search ./photos "red car in front of a house"
 kiokufux search ./photos "red car in front of a house" --summary
 kiokufux tag ./photos PHOTO_ID_FROM_SEARCH "family party"
+kiokufux auto-tag ./photos
+kiokufux tag-proposals ./photos PHOTO_ID_FROM_SEARCH
+kiokufux accept-tag ./photos PHOTO_ID_FROM_SEARCH dog
 kiokufux tags ./photos PHOTO_ID_FROM_SEARCH
 kiokufux export-sidecars ./photos
 ```
@@ -133,7 +140,7 @@ kiokufux tags ./photos PHOTO_ID
 kiokufux untag ./photos PHOTO_ID dog
 ```
 
-Manual tags are stored in SQLite and exported into sidecars under `review.tags`. Auto tags, when added by code with source `auto`, are exported under `semantic.auto_tags`.
+Manual tags are stored in SQLite and exported into sidecars under `review.tags`. KiokuFux can also generate local AI-assisted tag proposals with `kiokufux auto-tag ./photos`; proposals remain pending until reviewed with `kiokufux accept-tag` or `kiokufux reject-tag`. Accepted AI proposals are stored as `source=auto` tags and exported under `semantic.auto_tags`; pending/rejected proposals are exported under `review.tag_proposals` for review. No image data is sent to online services for MVP1 auto-tagging.
 
 ## Sidecars
 

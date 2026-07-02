@@ -47,6 +47,16 @@ class PhotoTag:
 
 
 @dataclass(slots=True)
+class TagProposal:
+    photo_id: str
+    tag: str
+    source: str
+    confidence: float
+    status: str
+    created_at: str
+
+
+@dataclass(slots=True)
 class SearchResult:
     photo_id: str
     score: float

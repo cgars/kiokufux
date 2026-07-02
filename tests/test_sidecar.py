@@ -17,8 +17,10 @@ def test_export_sidecars(tmp_path):
     db.upsert_photo(Photo("id", img, "x.jpg", "hash"))
     db.add_tag("id", "family")
     db.add_tag("id", "dog", source="auto")
+    db.propose_tag("id", "cat", 0.51)
     assert export_sidecars(db) == 1
     doc = json.loads((tmp_path / "x.jpg.kiokufux.json").read_text())
     assert doc["photo_id"] == "id"
     assert doc["review"]["tags"] == ["family"]
     assert doc["semantic"]["auto_tags"] == ["dog"]
+    assert doc["review"]["tag_proposals"] == [{"confidence": 0.51, "source": "local-ai", "status": "pending", "tag": "cat"}]

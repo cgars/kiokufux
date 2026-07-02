@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from .models import Embedding, Photo, PhotoTag
+from .models import Embedding, Photo, PhotoTag, TagProposal
 
 
 def now_iso() -> str:
@@ -57,6 +57,14 @@ class Catalog:
             );
             CREATE INDEX IF NOT EXISTS idx_photo_tags_photo_id ON photo_tags(photo_id);
             CREATE INDEX IF NOT EXISTS idx_photo_tags_tag ON photo_tags(tag);
+            CREATE TABLE IF NOT EXISTS tag_proposals (
+              photo_id TEXT NOT NULL, tag TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'local-ai',
+              confidence REAL NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL,
+              PRIMARY KEY (photo_id, tag, source),
+              FOREIGN KEY (photo_id) REFERENCES photos(photo_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_tag_proposals_photo_id ON tag_proposals(photo_id);
+            CREATE INDEX IF NOT EXISTS idx_tag_proposals_status ON tag_proposals(status);
             """
         )
         self.conn.commit()
@@ -141,6 +149,53 @@ class Catalog:
     def list_all_tags(self) -> list[PhotoTag]:
         rows = self.conn.execute("SELECT * FROM photo_tags ORDER BY tag, photo_id, source").fetchall()
         return [PhotoTag(**dict(row)) for row in rows]
+
+
+    def propose_tag(self, photo_id: str, tag: str, confidence: float, source: str = "local-ai") -> None:
+        normalized = normalize_tag(tag)
+        if not normalized:
+            raise ValueError("Tag proposal cannot be empty")
+        self.conn.execute(
+            """
+            INSERT INTO tag_proposals VALUES (?,?,?,?,?,?)
+            ON CONFLICT(photo_id, tag, source) DO UPDATE SET
+              confidence=excluded.confidence, status=excluded.status, created_at=excluded.created_at
+            """,
+            (photo_id, normalized, source, float(confidence), "pending", now_iso()),
+        )
+        self.conn.commit()
+
+    def list_tag_proposals(self, photo_id: str | None = None, status: str | None = None) -> list[TagProposal]:
+        clauses: list[str] = []
+        params: list[str] = []
+        if photo_id is not None:
+            clauses.append("photo_id=?")
+            params.append(photo_id)
+        if status is not None:
+            clauses.append("status=?")
+            params.append(status)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        rows = self.conn.execute(
+            f"SELECT * FROM tag_proposals{where} ORDER BY photo_id, confidence DESC, tag",
+            params,
+        ).fetchall()
+        return [TagProposal(**dict(row)) for row in rows]
+
+    def set_tag_proposal_status(self, photo_id: str, tag: str, status: str, source: str = "local-ai") -> None:
+        normalized = normalize_tag(tag)
+        self.conn.execute(
+            "UPDATE tag_proposals SET status=? WHERE photo_id=? AND tag=? AND source=?",
+            (status, photo_id, normalized, source),
+        )
+        self.conn.commit()
+
+    def accept_tag_proposal(self, photo_id: str, tag: str, source: str = "local-ai") -> None:
+        normalized = normalize_tag(tag)
+        self.add_tag(photo_id, normalized, source="auto")
+        self.set_tag_proposal_status(photo_id, normalized, "accepted", source=source)
+
+    def reject_tag_proposal(self, photo_id: str, tag: str, source: str = "local-ai") -> None:
+        self.set_tag_proposal_status(photo_id, tag, "rejected", source=source)
 
     def _photo(self, row: sqlite3.Row) -> Photo:
         d = dict(row); d["source_path"] = Path(d["source_path"]); d["missing"] = bool(d["missing"]); return Photo(**d)

@@ -5,6 +5,7 @@ import logging
 import sys
 from pathlib import Path
 
+from .autotagging import propose_tags
 from .catalog import Catalog
 from .config import KiokuFuxConfig, catalog_path, ensure_workspace, load_config, write_default_config
 from .embeddings import backend_from_options, generate_embeddings
@@ -119,6 +120,20 @@ def _build_parser() -> argparse.ArgumentParser:
     tags = sub.add_parser("tags")
     tags.add_argument("path", type=Path)
     tags.add_argument("photo_id", nargs="?")
+    auto_tag = sub.add_parser("auto-tag")
+    auto_tag.add_argument("path", type=Path)
+    proposals = sub.add_parser("tag-proposals")
+    proposals.add_argument("path", type=Path)
+    proposals.add_argument("photo_id", nargs="?")
+    proposals.add_argument("--status", default="pending", choices=["pending", "accepted", "rejected", "all"])
+    accept = sub.add_parser("accept-tag")
+    accept.add_argument("path", type=Path)
+    accept.add_argument("photo_id")
+    accept.add_argument("tag")
+    reject = sub.add_parser("reject-tag")
+    reject.add_argument("path", type=Path)
+    reject.add_argument("photo_id")
+    reject.add_argument("tag")
     e = sub.add_parser("embed")
     e.add_argument("path", type=Path)
     _add_embedding_options(e)
@@ -211,6 +226,23 @@ def main(argv: list[str] | None = None) -> int:
                 rows = cat.list_all_tags()
                 for row in rows:
                     print(f"{row.photo_id}\t{row.tag}\t{row.source}")
+        elif args.cmd == "auto-tag":
+            proposed = propose_tags(cat)
+            logger.info("Generated %s tag proposals", proposed)
+            print(f"Generated {proposed} tag proposals for review")
+        elif args.cmd == "tag-proposals":
+            status = None if args.status == "all" else args.status
+            rows = cat.list_tag_proposals(args.photo_id, status=status)
+            for row in rows:
+                print(f"{row.photo_id}\t{row.tag}\tconfidence={row.confidence:.2f}\tstatus={row.status}\tsource={row.source}")
+        elif args.cmd == "accept-tag":
+            cat.accept_tag_proposal(args.photo_id, args.tag)
+            logger.info("Accepted tag proposal %s for %s", args.tag, args.photo_id)
+            print(f"Accepted tag for {args.photo_id}: {args.tag}")
+        elif args.cmd == "reject-tag":
+            cat.reject_tag_proposal(args.photo_id, args.tag)
+            logger.info("Rejected tag proposal %s for %s", args.tag, args.photo_id)
+            print(f"Rejected tag for {args.photo_id}: {args.tag}")
     return 0
 
 

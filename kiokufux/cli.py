@@ -5,7 +5,7 @@ import logging
 import sys
 from pathlib import Path
 
-from .autotagging import propose_tags
+from .autotagging import EmbeddingAutoTagger, normalize_candidate_tags, propose_tags
 from .catalog import Catalog
 from .config import KiokuFuxConfig, catalog_path, ensure_workspace, load_config, write_default_config
 from .embeddings import backend_from_options, generate_embeddings
@@ -64,7 +64,7 @@ def _embedding_backend(args: argparse.Namespace, config: KiokuFuxConfig):
 
 
 def _privacy_notice(args: argparse.Namespace, config: KiokuFuxConfig | None = None) -> str:
-    if getattr(args, "cmd", None) not in {"embed", "search"}:
+    if getattr(args, "cmd", None) not in {"embed", "search", "auto-tag"}:
         return PRIVACY_LOCAL_NOTICE
     configured_backend = config.embeddings.backend if config is not None else None
     backend = getattr(args, "embedding_backend", None) or configured_backend
@@ -122,6 +122,10 @@ def _build_parser() -> argparse.ArgumentParser:
     tags.add_argument("photo_id", nargs="?")
     auto_tag = sub.add_parser("auto-tag")
     auto_tag.add_argument("path", type=Path)
+    auto_tag.add_argument("--candidate-tags", help="Comma-separated candidate tags for zero-shot AI tagging")
+    auto_tag.add_argument("--top-k", type=int, help="Maximum AI tag proposals per photo")
+    auto_tag.add_argument("--min-score", type=float, help="Minimum image/text similarity for AI tag proposals")
+    _add_embedding_options(auto_tag)
     proposals = sub.add_parser("tag-proposals")
     proposals.add_argument("path", type=Path)
     proposals.add_argument("photo_id", nargs="?")
@@ -227,7 +231,14 @@ def main(argv: list[str] | None = None) -> int:
                 for row in rows:
                     print(f"{row.photo_id}\t{row.tag}\t{row.source}")
         elif args.cmd == "auto-tag":
-            proposed = propose_tags(cat)
+            candidates = normalize_candidate_tags((args.candidate_tags or config.autotagging.candidate_tags).split(","))
+            tagger = EmbeddingAutoTagger(
+                backend=_embedding_backend(args, config),
+                candidate_tags=candidates,
+                top_k=(args.top_k if args.top_k is not None else config.autotagging.top_k),
+                min_score=(args.min_score if args.min_score is not None else config.autotagging.min_score),
+            )
+            proposed = propose_tags(cat, tagger)
             logger.info("Generated %s tag proposals", proposed)
             print(f"Generated {proposed} tag proposals for review")
         elif args.cmd == "tag-proposals":

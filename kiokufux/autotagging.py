@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
 from .catalog import Catalog
+from .embeddings import EmbeddingBackend, default_backend
 from .models import Photo
+from .search import cosine
 
-STOPWORDS = {"img", "image", "photo", "pic", "dsc", "scan", "copy", "edited", "final"}
-KEYWORD_TAGS = {
+DEFAULT_CANDIDATE_TAGS = [
     "dog", "cat", "cow", "horse", "bird", "bike", "bicycle", "car", "truck", "boat",
     "church", "house", "garden", "party", "lake", "beach", "snow", "mountain", "forest",
     "baby", "wedding", "birthday", "holiday", "family", "school", "train", "flower",
-}
+]
+DEFAULT_AUTO_TAG_TOP_K = 5
+DEFAULT_AUTO_TAG_MIN_SCORE = 0.20
 
 
 @dataclass(slots=True)
@@ -21,54 +23,52 @@ class ProposedTag:
     reason: str
 
 
-class LocalAutoTagger:
-    """Small local-only tag proposer for MVP review workflows.
+class EmbeddingAutoTagger:
+    """Local zero-shot tag proposer using image/text embeddings.
 
-    It intentionally creates proposals, not accepted tags. Users can review and
-    accept or reject them before they become exported auto tags.
+    The tagger embeds each image and candidate tag locally, compares them with
+    cosine similarity, and creates reviewable proposals. It does not accept tags
+    automatically; users review proposals before they become exported auto tags.
     """
 
-    source = "local-ai"
+    source = "ai-zero-shot"
+
+    def __init__(
+        self,
+        backend: EmbeddingBackend | None = None,
+        candidate_tags: list[str] | None = None,
+        top_k: int = DEFAULT_AUTO_TAG_TOP_K,
+        min_score: float = DEFAULT_AUTO_TAG_MIN_SCORE,
+    ) -> None:
+        self.backend = backend or default_backend()
+        self.candidate_tags = normalize_candidate_tags(candidate_tags or DEFAULT_CANDIDATE_TAGS)
+        self.top_k = top_k
+        self.min_score = min_score
 
     def propose(self, photo: Photo) -> list[ProposedTag]:
-        proposals: dict[str, ProposedTag] = {}
-        for tag in self._filename_tags(photo.source_path):
-            proposals[tag] = ProposedTag(tag, 0.72, "filename keyword")
-        color = self._dominant_color_tag(photo.source_path)
-        if color and color not in proposals:
-            proposals[color] = ProposedTag(color, 0.55, "dominant color")
-        return sorted(proposals.values(), key=lambda p: (-p.confidence, p.tag))
-
-    def _filename_tags(self, path: Path) -> list[str]:
-        cleaned = path.stem.lower().replace("_", " ").replace("-", " ")
-        tags = []
-        for token in cleaned.split():
-            token = "".join(ch for ch in token if ch.isalpha())
-            if len(token) >= 3 and token not in STOPWORDS and token in KEYWORD_TAGS:
-                tags.append(token)
-        return tags
-
-    def _dominant_color_tag(self, path: Path) -> str | None:
-        try:
-            from PIL import Image, ImageOps
-            with Image.open(path) as image:
-                image = ImageOps.exif_transpose(image).convert("RGB").resize((1, 1))
-                red, green, blue = image.getpixel((0, 0))
-        except Exception:
-            return None
-        if max(red, green, blue) < 40:
-            return "dark"
-        if red > green * 1.25 and red > blue * 1.25:
-            return "red"
-        if green > red * 1.20 and green > blue * 1.20:
-            return "green"
-        if blue > red * 1.20 and blue > green * 1.20:
-            return "blue"
-        return None
+        image_vector = self.backend.embed_image(photo.source_path)
+        proposals: list[ProposedTag] = []
+        for tag in self.candidate_tags:
+            text_vector = self.backend.embed_text(tag)
+            score = cosine(image_vector, text_vector)
+            if score >= self.min_score:
+                proposals.append(ProposedTag(tag, score, "zero-shot image/text similarity"))
+        return sorted(proposals, key=lambda p: (-p.confidence, p.tag))[: self.top_k]
 
 
-def propose_tags(catalog: Catalog, tagger: LocalAutoTagger | None = None) -> int:
-    tagger = tagger or LocalAutoTagger()
+def normalize_candidate_tags(tags: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for tag in tags:
+        cleaned = " ".join(tag.strip().lower().split())
+        if cleaned and cleaned not in seen:
+            normalized.append(cleaned)
+            seen.add(cleaned)
+    return normalized
+
+
+def propose_tags(catalog: Catalog, tagger: EmbeddingAutoTagger | None = None) -> int:
+    tagger = tagger or EmbeddingAutoTagger()
     count = 0
     for photo in catalog.list_photos():
         for proposal in tagger.propose(photo):

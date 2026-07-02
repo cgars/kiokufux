@@ -58,7 +58,7 @@ class Catalog:
             CREATE INDEX IF NOT EXISTS idx_photo_tags_photo_id ON photo_tags(photo_id);
             CREATE INDEX IF NOT EXISTS idx_photo_tags_tag ON photo_tags(tag);
             CREATE TABLE IF NOT EXISTS tag_proposals (
-              photo_id TEXT NOT NULL, tag TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'local-ai',
+              photo_id TEXT NOT NULL, tag TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'ai-zero-shot',
               confidence REAL NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL,
               PRIMARY KEY (photo_id, tag, source),
               FOREIGN KEY (photo_id) REFERENCES photos(photo_id)
@@ -151,7 +151,7 @@ class Catalog:
         return [PhotoTag(**dict(row)) for row in rows]
 
 
-    def propose_tag(self, photo_id: str, tag: str, confidence: float, source: str = "local-ai") -> None:
+    def propose_tag(self, photo_id: str, tag: str, confidence: float, source: str = "ai-zero-shot") -> None:
         normalized = normalize_tag(tag)
         if not normalized:
             raise ValueError("Tag proposal cannot be empty")
@@ -181,7 +181,7 @@ class Catalog:
         ).fetchall()
         return [TagProposal(**dict(row)) for row in rows]
 
-    def set_tag_proposal_status(self, photo_id: str, tag: str, status: str, source: str = "local-ai") -> None:
+    def set_tag_proposal_status(self, photo_id: str, tag: str, status: str, source: str = "ai-zero-shot") -> None:
         normalized = normalize_tag(tag)
         self.conn.execute(
             "UPDATE tag_proposals SET status=? WHERE photo_id=? AND tag=? AND source=?",
@@ -189,12 +189,12 @@ class Catalog:
         )
         self.conn.commit()
 
-    def accept_tag_proposal(self, photo_id: str, tag: str, source: str = "local-ai") -> None:
+    def accept_tag_proposal(self, photo_id: str, tag: str, source: str = "ai-zero-shot") -> None:
         normalized = normalize_tag(tag)
         self.add_tag(photo_id, normalized, source="auto")
         self.set_tag_proposal_status(photo_id, normalized, "accepted", source=source)
 
-    def reject_tag_proposal(self, photo_id: str, tag: str, source: str = "local-ai") -> None:
+    def reject_tag_proposal(self, photo_id: str, tag: str, source: str = "ai-zero-shot") -> None:
         self.set_tag_proposal_status(photo_id, tag, "rejected", source=source)
 
     def _photo(self, row: sqlite3.Row) -> Photo:

@@ -23,4 +23,4 @@ def test_export_sidecars(tmp_path):
     assert doc["photo_id"] == "id"
     assert doc["review"]["tags"] == ["family"]
     assert doc["semantic"]["auto_tags"] == ["dog"]
-    assert doc["review"]["tag_proposals"] == [{"confidence": 0.51, "source": "local-ai", "status": "pending", "tag": "cat"}]
+    assert doc["review"]["tag_proposals"] == [{"confidence": 0.51, "source": "ai-zero-shot", "status": "pending", "tag": "cat"}]

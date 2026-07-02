@@ -28,6 +28,13 @@ class EmbeddingConfig:
 
 
 @dataclass(slots=True)
+class AutoTaggingConfig:
+    candidate_tags: str = "dog, cat, cow, horse, bird, bike, car, church, house, garden, party, lake, beach, snow, mountain, family"
+    top_k: int = 5
+    min_score: float = 0.20
+
+
+@dataclass(slots=True)
 class SearchConfig:
     top_k: int = 10
     min_raw_score: float = 0.20
@@ -45,6 +52,7 @@ class KiokuFuxConfig:
     thumbnails: ThumbnailConfig = field(default_factory=ThumbnailConfig)
     embeddings: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
+    autotagging: AutoTaggingConfig = field(default_factory=AutoTaggingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
 
@@ -88,6 +96,11 @@ top_k = 10
 min_raw_score = 0.20
 min_robust_z = 1.0
 
+[autotagging]
+candidate_tags = "dog, cat, cow, horse, bird, bike, car, church, house, garden, party, lake, beach, snow, mountain, family"
+top_k = 5
+min_score = 0.20
+
 [logging]
 verbose = 0
 """
@@ -115,6 +128,7 @@ def config_from_mapping(data: dict[str, Any]) -> KiokuFuxConfig:
     thumbnails = data.get("thumbnails", {})
     embeddings = data.get("embeddings", {})
     search = data.get("search", {})
+    autotagging = data.get("autotagging", {})
     logging = data.get("logging", {})
     if "directory" in workspace:
         cfg.workspace.directory = str(workspace["directory"])
@@ -132,6 +146,16 @@ def config_from_mapping(data: dict[str, Any]) -> KiokuFuxConfig:
         cfg.search.min_raw_score = float(search["min_raw_score"])
     if "min_robust_z" in search:
         cfg.search.min_robust_z = float(search["min_robust_z"])
+    if "candidate_tags" in autotagging:
+        value = autotagging["candidate_tags"]
+        if isinstance(value, list):
+            cfg.autotagging.candidate_tags = ", ".join(str(item) for item in value)
+        else:
+            cfg.autotagging.candidate_tags = str(value)
+    if "top_k" in autotagging:
+        cfg.autotagging.top_k = int(autotagging["top_k"])
+    if "min_score" in autotagging:
+        cfg.autotagging.min_score = float(autotagging["min_score"])
     if "verbose" in logging:
         cfg.logging.verbose = int(logging["verbose"])
     return cfg

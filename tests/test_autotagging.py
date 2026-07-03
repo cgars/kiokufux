@@ -57,3 +57,18 @@ def test_propose_accept_and_reject_tag_workflow(tmp_path):
 
 def test_normalize_candidate_tags_deduplicates_and_strips():
     assert normalize_candidate_tags([" Cow ", "cow", "family party"]) == ["cow", "family party"]
+
+
+def test_accept_all_tag_proposals_can_apply_globally_or_by_photo(tmp_path):
+    catalog = Catalog(tmp_path / "catalog.sqlite"); catalog.init_schema()
+    for photo_id in ["id1", "id2"]:
+        photo_path = tmp_path / f"{photo_id}.jpg"; photo_path.write_text("x")
+        catalog.upsert_photo(Photo(photo_id, photo_path, photo_path.name, f"hash-{photo_id}"))
+        catalog.propose_tag(photo_id, "cow", 0.9)
+
+    assert catalog.accept_tag_proposals("id1") == 1
+    assert [tag.tag for tag in catalog.list_tags("id1")] == ["cow"]
+    assert catalog.list_tags("id2") == []
+
+    assert catalog.accept_tag_proposals() == 1
+    assert [tag.tag for tag in catalog.list_tags("id2")] == ["cow"]

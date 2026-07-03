@@ -113,3 +113,48 @@ def test_privacy_notice_uses_configured_embedding_backend():
     assert _privacy_notice(Namespace(cmd="embed", embedding_backend=None), cfg) == OPENCLIP_DOWNLOAD_NOTICE
     cfg.embeddings.backend = "simple"
     assert _privacy_notice(Namespace(cmd="embed", embedding_backend=None), cfg) == PRIVACY_LOCAL_NOTICE
+
+
+def test_tag_review_alias_and_accept_all_parser(tmp_path):
+    from kiokufux.cli import _build_parser
+
+    review_args = _build_parser().parse_args(["tag-review", str(tmp_path)])
+    assert review_args.cmd == "tag-review"
+    assert review_args.photo_id is None
+
+    accept_args = _build_parser().parse_args(["accept-tag", str(tmp_path), "--all"])
+    assert accept_args.all is True
+    assert accept_args.photo_id is None
+    assert accept_args.tag is None
+
+    accept_photo_args = _build_parser().parse_args(["accept-tag", str(tmp_path), "photo-id", "--all"])
+    assert accept_photo_args.all is True
+    assert accept_photo_args.photo_id == "photo-id"
+    assert accept_photo_args.tag is None
+
+
+def test_print_tag_proposals_groups_all_images(capsys):
+    from pathlib import Path
+
+    from kiokufux.cli import _print_tag_proposals
+    from kiokufux.models import Photo, TagProposal
+
+    rows = [
+        TagProposal("abcdef123", "cat", "ai-zero-shot", 0.91, "pending", "now"),
+        TagProposal("abcdef123", "pet", "ai-zero-shot", 0.81, "pending", "now"),
+        TagProposal("123456789", "dog", "ai-zero-shot", 0.71, "pending", "now"),
+    ]
+    photos = {
+        "abcdef123": Photo("abcdef123", Path("/photos/cat.jpg"), "cat.jpg", "hash1"),
+        "123456789": Photo("123456789", Path("/photos/dog.jpg"), "nested/dog.jpg", "hash2"),
+    }
+
+    _print_tag_proposals(rows, photos)
+
+    assert capsys.readouterr().out.splitlines() == [
+        "abcdef1\tcat.jpg:",
+        "  - cat\tconfidence=0.91\tstatus=pending\tsource=ai-zero-shot",
+        "  - pet\tconfidence=0.81\tstatus=pending\tsource=ai-zero-shot",
+        "1234567\tdog.jpg:",
+        "  - dog\tconfidence=0.71\tstatus=pending\tsource=ai-zero-shot",
+    ]

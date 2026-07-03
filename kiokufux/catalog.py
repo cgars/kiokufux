@@ -97,6 +97,20 @@ class Catalog:
         row = self.conn.execute("SELECT * FROM photos WHERE photo_id=?", (photo_id,)).fetchone()
         return self._photo(row) if row else None
 
+    def resolve_photo_id(self, photo_id_or_prefix: str) -> str:
+        if len(photo_id_or_prefix) < 7:
+            raise ValueError("Photo ID prefix must be at least 7 characters")
+        rows = self.conn.execute(
+            "SELECT photo_id FROM photos WHERE photo_id LIKE ? ORDER BY photo_id",
+            (f"{photo_id_or_prefix}%",),
+        ).fetchall()
+        if not rows:
+            raise ValueError(f"No photo found for ID prefix: {photo_id_or_prefix}")
+        if len(rows) > 1:
+            matches = ", ".join(row["photo_id"][:7] for row in rows[:5])
+            raise ValueError(f"Ambiguous photo ID prefix {photo_id_or_prefix!r}; matches: {matches}")
+        return str(rows[0]["photo_id"])
+
     def list_photos(self, include_missing: bool = False) -> list[Photo]:
         sql = "SELECT * FROM photos" + ("" if include_missing else " WHERE missing=0") + " ORDER BY relative_path"
         return [self._photo(r) for r in self.conn.execute(sql)]
@@ -193,6 +207,17 @@ class Catalog:
         normalized = normalize_tag(tag)
         self.add_tag(photo_id, normalized, source="auto")
         self.set_tag_proposal_status(photo_id, normalized, "accepted", source=source)
+
+    def accept_tag_proposals(self, photo_id: str | None = None, source: str = "ai-zero-shot") -> int:
+        proposals = self.list_tag_proposals(photo_id, status="pending")
+        accepted = 0
+        for proposal in proposals:
+            if proposal.source != source:
+                continue
+            self.add_tag(proposal.photo_id, proposal.tag, source="auto")
+            self.set_tag_proposal_status(proposal.photo_id, proposal.tag, "accepted", source=source)
+            accepted += 1
+        return accepted
 
     def reject_tag_proposal(self, photo_id: str, tag: str, source: str = "ai-zero-shot") -> None:
         self.set_tag_proposal_status(photo_id, tag, "rejected", source=source)

@@ -143,7 +143,14 @@ def generate_embeddings(catalog: Catalog, workspace: Path, backend: EmbeddingBac
             vec = backend.embed_image(photo.source_path)
             np.save(target, vec)
             catalog.upsert_embedding(
-                Embedding(photo.photo_id, backend.model_name, backend.model_version, int(vec.shape[0]), str(target), now_iso())
+                Embedding(
+                    photo.photo_id,
+                    backend.model_name,
+                    backend.model_version,
+                    int(vec.shape[0]),
+                    catalog.stored_artifact_path(target),
+                    now_iso(),
+                )
             )
             count += 1
         except Exception as exc:

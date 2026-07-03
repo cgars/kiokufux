@@ -10,6 +10,7 @@ KiokuFux MVP 1 is a local-first CLI prototype for indexing private photo archive
 - Stores a resumable SQLite catalog in `.kiokufux/catalog.sqlite`.
 - Generates JPEG thumbnails in `.kiokufux/thumbnails/` with EXIF orientation applied.
 - Generates local embeddings in `.kiokufux/embeddings/`.
+- Stores embedding artifact paths relative to the `.kiokufux/` workspace so archives remain movable.
 - Runs text-to-image semantic search using cosine similarity.
 - Exports versioned `.kiokufux.json` sidecars next to photos.
 - Logs scan errors to `.kiokufux/logs/kiokufux.log` and records unreadable images without stopping the scan.
@@ -43,7 +44,9 @@ kiokufux -v search PATH "query text" --summary
 kiokufux tag PATH PHOTO_ID "family party"
 kiokufux auto-tag PATH
 kiokufux tag-proposals PATH [PHOTO_ID]
-kiokufux accept-tag PATH PHOTO_ID TAG
+kiokufux tag-review PATH [PHOTO_ID]
+kiokufux accept-tag PATH PHOTO_ID_OR_7_CHAR_PREFIX TAG
+kiokufux accept-tag PATH [PHOTO_ID_OR_7_CHAR_PREFIX] --all
 kiokufux reject-tag PATH PHOTO_ID TAG
 kiokufux tags PATH [PHOTO_ID]
 kiokufux untag PATH PHOTO_ID "family party"
@@ -61,8 +64,10 @@ kiokufux search ./photos "red car in front of a house"
 kiokufux search ./photos "red car in front of a house" --summary
 kiokufux tag ./photos PHOTO_ID_FROM_SEARCH "family party"
 kiokufux auto-tag ./photos
+kiokufux tag-review ./photos
 kiokufux tag-proposals ./photos PHOTO_ID_FROM_SEARCH
-kiokufux accept-tag ./photos PHOTO_ID_FROM_SEARCH dog
+kiokufux accept-tag ./photos PHOTO_ID_OR_7_CHAR_PREFIX dog
+kiokufux accept-tag ./photos --all
 kiokufux tags ./photos PHOTO_ID_FROM_SEARCH
 kiokufux export-sidecars ./photos
 ```
@@ -145,7 +150,7 @@ kiokufux tags ./photos PHOTO_ID
 kiokufux untag ./photos PHOTO_ID dog
 ```
 
-Manual tags are stored in SQLite and exported into sidecars under `review.tags`. KiokuFux can also generate local AI-assisted tag proposals with `kiokufux auto-tag ./photos`; this uses the configured embedding backend for zero-shot image/text similarity between each photo and candidate tag labels from `.kiokufux/config.toml` (or `--candidate-tags` for one run). Proposals remain pending until reviewed with `kiokufux accept-tag` or `kiokufux reject-tag`. Accepted AI proposals are stored as `source=auto` tags and exported under `semantic.auto_tags`; pending/rejected proposals are exported under `review.tag_proposals` for review. No image data is sent to online services for MVP1 auto-tagging, though OpenCLIP may download model weights if selected and uncached.
+Manual tags are stored in SQLite and exported into sidecars under `review.tags`. KiokuFux can also generate local AI-assisted tag proposals with `kiokufux auto-tag ./photos`; this uses the configured embedding backend for zero-shot image/text similarity between each photo and candidate tag labels from `.kiokufux/config.toml` (or `--candidate-tags` for one run). Proposals remain pending until reviewed with `kiokufux tag-review` (or `kiokufux tag-proposals`) and then accepted with `kiokufux accept-tag` or rejected with `kiokufux reject-tag`. Running `kiokufux tag-review ./photos` without a photo ID prints a grouped list of all images that have proposed tags, showing each image filename and the first seven characters of its photo ID; adding a photo ID limits review output to that image. To accept every pending proposal, use `kiokufux accept-tag ./photos --all`; add either the full photo ID or its first seven characters before `--all` to accept all pending proposals for only that image. Single-proposal accepts also allow either the full photo ID or its first seven characters. Accepted AI proposals are stored as `source=auto` tags and exported under `semantic.auto_tags`; pending/rejected proposals are exported under `review.tag_proposals` for review. No image data is sent to online services for MVP1 auto-tagging, though OpenCLIP may download model weights if selected and uncached.
 
 ## Sidecars
 

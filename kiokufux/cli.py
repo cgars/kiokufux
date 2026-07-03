@@ -9,7 +9,7 @@ from .autotagging import EmbeddingAutoTagger, normalize_candidate_tags, propose_
 from .catalog import Catalog
 from .config import KiokuFuxConfig, catalog_path, ensure_workspace, load_config, write_default_config
 from .embeddings import backend_from_options, generate_embeddings
-from .models import SearchResult
+from .models import Photo, SearchResult, TagProposal
 from .scanner import scan as scan_folder
 from .search import search as run_search
 from .sidecar import export_sidecars
@@ -87,6 +87,21 @@ def _format_search_result(index: int, result: SearchResult, summary: bool = Fals
     )
 
 
+def _proposal_photo_label(photo_id: str, photos: dict[str, Photo]) -> str:
+    photo = photos.get(photo_id)
+    filename = Path(photo.relative_path).name if photo is not None else "(unknown)"
+    return f"{photo_id[:7]}\t{filename}"
+
+
+def _print_tag_proposals(rows: list[TagProposal], photos: dict[str, Photo]) -> None:
+    current_photo_id: str | None = None
+    for row in rows:
+        if row.photo_id != current_photo_id:
+            current_photo_id = row.photo_id
+            print(f"{_proposal_photo_label(row.photo_id, photos)}:")
+        print(f"  - {row.tag}\tconfidence={row.confidence:.2f}\tstatus={row.status}\tsource={row.source}")
+
+
 def _extract_verbose_args(argv: list[str]) -> tuple[list[str], int]:
     cleaned: list[str] = []
     verbose = 0
@@ -126,14 +141,15 @@ def _build_parser() -> argparse.ArgumentParser:
     auto_tag.add_argument("--top-k", type=int, help="Maximum AI tag proposals per photo")
     auto_tag.add_argument("--min-score", type=float, help="Minimum image/text similarity for AI tag proposals")
     _add_embedding_options(auto_tag)
-    proposals = sub.add_parser("tag-proposals")
+    proposals = sub.add_parser("tag-proposals", aliases=["tag-review"])
     proposals.add_argument("path", type=Path)
     proposals.add_argument("photo_id", nargs="?")
     proposals.add_argument("--status", default="pending", choices=["pending", "accepted", "rejected", "all"])
     accept = sub.add_parser("accept-tag")
     accept.add_argument("path", type=Path)
-    accept.add_argument("photo_id")
-    accept.add_argument("tag")
+    accept.add_argument("photo_id", nargs="?")
+    accept.add_argument("tag", nargs="?")
+    accept.add_argument("--all", action="store_true", help="Accept all pending tag proposals, optionally limited to PHOTO_ID")
     reject = sub.add_parser("reject-tag")
     reject.add_argument("path", type=Path)
     reject.add_argument("photo_id")
@@ -241,15 +257,28 @@ def main(argv: list[str] | None = None) -> int:
             proposed = propose_tags(cat, tagger)
             logger.info("Generated %s tag proposals", proposed)
             print(f"Generated {proposed} tag proposals for review")
-        elif args.cmd == "tag-proposals":
+        elif args.cmd in {"tag-proposals", "tag-review"}:
             status = None if args.status == "all" else args.status
             rows = cat.list_tag_proposals(args.photo_id, status=status)
-            for row in rows:
-                print(f"{row.photo_id}\t{row.tag}\tconfidence={row.confidence:.2f}\tstatus={row.status}\tsource={row.source}")
+            photos = {photo.photo_id: photo for photo in cat.list_photos(include_missing=True)}
+            _print_tag_proposals(rows, photos)
         elif args.cmd == "accept-tag":
-            cat.accept_tag_proposal(args.photo_id, args.tag)
-            logger.info("Accepted tag proposal %s for %s", args.tag, args.photo_id)
-            print(f"Accepted tag for {args.photo_id}: {args.tag}")
+            if args.photo_id:
+                try:
+                    args.photo_id = cat.resolve_photo_id(args.photo_id)
+                except ValueError as exc:
+                    parser.error(str(exc))
+            if args.all:
+                accepted = cat.accept_tag_proposals(args.photo_id)
+                scope = args.photo_id[:7] if args.photo_id else "all images"
+                logger.info("Accepted %s pending tag proposals for %s", accepted, scope)
+                print(f"Accepted {accepted} pending tag proposals for {scope}")
+            else:
+                if not args.photo_id or not args.tag:
+                    parser.error("accept-tag requires PHOTO_ID and TAG unless --all is used")
+                cat.accept_tag_proposal(args.photo_id, args.tag)
+                logger.info("Accepted tag proposal %s for %s", args.tag, args.photo_id)
+                print(f"Accepted tag for {args.photo_id}: {args.tag}")
         elif args.cmd == "reject-tag":
             cat.reject_tag_proposal(args.photo_id, args.tag)
             logger.info("Rejected tag proposal %s for %s", args.tag, args.photo_id)

@@ -126,6 +126,16 @@ class Catalog:
     def set_thumbnail(self, photo_id: str, path: Path) -> None:
         self.conn.execute("UPDATE photos SET thumbnail_path=?, updated_at=? WHERE photo_id=?", (str(path), now_iso(), photo_id)); self.conn.commit()
 
+    def stored_artifact_path(self, path: Path) -> str:
+        try:
+            return str(path.relative_to(self.db_path.parent))
+        except ValueError:
+            return str(path)
+
+    def artifact_path(self, stored_path: str) -> Path:
+        path = Path(stored_path)
+        return path if path.is_absolute() else self.db_path.parent / path
+
     def upsert_embedding(self, embedding: Embedding) -> None:
         self.conn.execute("INSERT OR REPLACE INTO embeddings VALUES (?,?,?,?,?,?)", (embedding.photo_id, embedding.model_name, embedding.model_version, embedding.vector_dimension, embedding.embedding_path, embedding.created_at))
         self.conn.execute("UPDATE photos SET embedding_status='indexed', updated_at=? WHERE photo_id=?", (now_iso(), embedding.photo_id)); self.conn.commit()

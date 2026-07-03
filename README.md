@@ -10,6 +10,7 @@ KiokuFux MVP 1 is a local-first CLI prototype for indexing private photo archive
 - Stores a resumable SQLite catalog in `.kiokufux/catalog.sqlite`.
 - Generates JPEG thumbnails in `.kiokufux/thumbnails/` with EXIF orientation applied.
 - Generates local embeddings in `.kiokufux/embeddings/`.
+- Stores embedding artifact paths relative to the `.kiokufux/` workspace so archives remain movable.
 - Runs text-to-image semantic search using cosine similarity.
 - Exports versioned `.kiokufux.json` sidecars next to photos.
 - Logs scan errors to `.kiokufux/logs/kiokufux.log` and records unreadable images without stopping the scan.

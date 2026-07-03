@@ -116,7 +116,7 @@ def search(
         photo = catalog.get_photo(emb.photo_id)
         if not photo or photo.missing:
             continue
-        vec = np.load(emb.embedding_path)
+        vec = np.load(catalog.artifact_path(emb.embedding_path))
         results.append(
             SearchResult(
                 photo.photo_id,

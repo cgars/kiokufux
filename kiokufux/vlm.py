@@ -1,0 +1,216 @@
+from __future__ import annotations
+
+import base64
+import json
+import urllib.request
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+
+VLM_SOURCE = "vlm-fake"
+
+
+@dataclass(slots=True)
+class ImageAnalysisTag:
+    tag: str
+    confidence: float
+    category_hint: str | None = None
+    evidence: str | None = None
+
+
+@dataclass(slots=True)
+class ImageAnalysis:
+    photo_id: str
+    source: str
+    model_name: str
+    model_version: str
+    caption: str | None = None
+    objects: list[str] = field(default_factory=list)
+    scene: str | None = None
+    activity: str | None = None
+    aesthetic: list[str] = field(default_factory=list)
+    candidate_tags: list[ImageAnalysisTag] = field(default_factory=list)
+    uncertain_tags: list[ImageAnalysisTag] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    raw_response: dict[str, Any] | None = None
+    created_at: str | None = None
+
+
+class VisionLanguageBackend(ABC):
+    model_name = "base-vlm"
+    model_version = "v1"
+    source = "vlm"
+
+    @abstractmethod
+    def analyze_image(self, image_path: Path, accepted_vocabulary: list[str] | None = None) -> dict[str, Any]: ...
+
+
+IMAGE_ANALYSIS_PROMPT = """Analyze this private archive photo for local search. Return only valid JSON with keys: caption, objects, scene, activity, aesthetic, candidate_tags, uncertain_tags, warnings. candidate_tags and uncertain_tags must be arrays of objects with tag, confidence, category_hint, and evidence. Do not identify named people. Do not infer sensitive traits. Use lowercase short tags and visually grounded evidence."""
+
+
+class FakeVisionLanguageBackend(VisionLanguageBackend):
+    """Deterministic VLM backend for local tests and pipeline wiring."""
+
+    model_name = "fake-vlm"
+    model_version = "test"
+    source = VLM_SOURCE
+
+    def analyze_image(self, image_path: Path, accepted_vocabulary: list[str] | None = None) -> dict[str, Any]:
+        stem_tokens = [token for token in image_path.stem.lower().replace("_", " ").replace("-", " ").split() if token]
+        preferred = [tag for tag in (accepted_vocabulary or []) if tag in stem_tokens]
+        candidate_tags = [
+            {"tag": tag, "confidence": 0.86, "category_hint": "vocabulary", "evidence": "matched accepted vocabulary in filename"}
+            for tag in preferred
+        ]
+        if not candidate_tags and stem_tokens:
+            candidate_tags.append({"tag": stem_tokens[0], "confidence": 0.55, "category_hint": "other", "evidence": "derived by fake backend from filename"})
+        return {
+            "caption": f"Local fake VLM analysis for {image_path.name}.",
+            "objects": [],
+            "scene": None,
+            "activity": None,
+            "aesthetic": [],
+            "candidate_tags": candidate_tags,
+            "uncertain_tags": [],
+            "warnings": [],
+        }
+
+
+class OllamaVisionLanguageBackend(VisionLanguageBackend):
+    """Vision backend for local or LAN-hosted Ollama servers."""
+
+    model_name = "ollama"
+    source = "vlm-ollama"
+
+    def __init__(
+        self,
+        base_url: str = "http://localhost:11434",
+        model: str = "llava",
+        timeout: float = 120.0,
+        prompt: str = IMAGE_ANALYSIS_PROMPT,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.ollama_model = model
+        self.model_version = model
+        self.timeout = timeout
+        self.prompt = prompt
+
+    def analyze_image(self, image_path: Path, accepted_vocabulary: list[str] | None = None) -> dict[str, Any]:
+        prompt = self.prompt
+        if accepted_vocabulary:
+            prompt += "\nPrefer these accepted vocabulary tags when applicable: " + ", ".join(accepted_vocabulary)
+        payload = {
+            "model": self.ollama_model,
+            "prompt": prompt,
+            "images": [base64.b64encode(image_path.read_bytes()).decode("ascii")],
+            "format": "json",
+            "stream": False,
+        }
+        response = self._post_json("/api/generate", payload)
+        generated = response.get("response", response)
+        return json.loads(generated) if isinstance(generated, str) else dict(generated)
+
+    def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        request = urllib.request.Request(
+            self.base_url + path,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+
+def backend_from_name(
+    name: str | None = None,
+    *,
+    ollama_url: str | None = None,
+    ollama_model: str | None = None,
+    timeout: float = 120.0,
+) -> VisionLanguageBackend:
+    backend = name or "fake"
+    if backend == "fake":
+        return FakeVisionLanguageBackend()
+    if backend == "ollama":
+        return OllamaVisionLanguageBackend(
+            base_url=ollama_url or "http://localhost:11434",
+            model=ollama_model or "llava",
+            timeout=timeout,
+        )
+    raise ValueError(f"Unknown VLM backend: {backend}")
+
+
+def parse_image_analysis(
+    photo_id: str,
+    raw: str | dict[str, Any],
+    *,
+    source: str,
+    model_name: str,
+    model_version: str,
+) -> ImageAnalysis:
+    data = json.loads(raw) if isinstance(raw, str) else dict(raw)
+    return ImageAnalysis(
+        photo_id=photo_id,
+        source=source,
+        model_name=model_name,
+        model_version=model_version,
+        caption=_optional_str(data.get("caption")),
+        objects=_string_list(data.get("objects")),
+        scene=_optional_str(data.get("scene")),
+        activity=_optional_str(data.get("activity")),
+        aesthetic=_string_list(data.get("aesthetic")),
+        candidate_tags=_tag_list(data.get("candidate_tags")),
+        uncertain_tags=_tag_list(data.get("uncertain_tags")),
+        warnings=_string_list(data.get("warnings")),
+        raw_response=data,
+    )
+
+
+def _tag_list(value: Any) -> list[ImageAnalysisTag]:
+    if not isinstance(value, list):
+        return []
+    tags: list[ImageAnalysisTag] = []
+    for item in value:
+        if isinstance(item, str):
+            tag = item.strip().lower()
+            if tag:
+                tags.append(ImageAnalysisTag(tag=tag, confidence=0.5))
+            continue
+        if not isinstance(item, dict):
+            continue
+        tag = str(item.get("tag", "")).strip().lower()
+        if not tag:
+            continue
+        confidence = _confidence(item.get("confidence"))
+        tags.append(
+            ImageAnalysisTag(
+                tag=tag,
+                confidence=confidence,
+                category_hint=_optional_str(item.get("category_hint")),
+                evidence=_optional_str(item.get("evidence")),
+            )
+        )
+    return tags
+
+
+def _confidence(value: Any) -> float:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return 0.5
+    return min(max(score, 0.0), 1.0)
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip().lower() for item in value if str(item).strip()]
+
+
+def _optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text if text else None

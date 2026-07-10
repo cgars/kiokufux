@@ -158,3 +158,79 @@ def test_print_tag_proposals_groups_all_images(capsys):
         "1234567\tdog.jpg:",
         "  - dog\tconfidence=0.71\tstatus=pending\tsource=ai-zero-shot",
     ]
+
+
+def test_print_tag_proposal_summary(capsys):
+    from kiokufux.cli import _print_tag_proposal_summary
+    from kiokufux.models import TagProposalSummary
+
+    _print_tag_proposal_summary([
+        TagProposalSummary("garden", "ai-zero-shot", "pending", 3, 2, 0.756, 0.91),
+    ])
+
+    assert capsys.readouterr().out.splitlines() == [
+        "garden\tphotos=2\tproposals=3\tavg_confidence=0.76\tmax_confidence=0.91\tstatus=pending\tsource=ai-zero-shot",
+    ]
+
+
+def test_parser_accepts_tag_summary_command(tmp_path):
+    from kiokufux.cli import _build_parser
+
+    args = _build_parser().parse_args(["tag-summary", str(tmp_path), "--status", "all"])
+
+    assert args.cmd == "tag-summary"
+    assert args.status == "all"
+
+
+def test_print_vocabulary(capsys):
+    from kiokufux.cli import _print_vocabulary
+    from kiokufux.models import TagVocabularyEntry
+
+    _print_vocabulary([
+        TagVocabularyEntry("garden", "place", "core", "accepted", "outdoor", ["yard"], "common scene", "created", "updated"),
+    ])
+
+    assert capsys.readouterr().out.splitlines() == [
+        "garden\tcategory=place\tscope=core\tstatus=accepted\tparent=outdoor\taliases=yard\tnotes=common scene",
+    ]
+
+
+def test_parser_accepts_vocabulary_commands(tmp_path):
+    from kiokufux.cli import _build_parser
+
+    parser = _build_parser()
+    assert parser.parse_args(["vocab", str(tmp_path), "--status", "accepted"]).cmd == "vocab"
+    assert parser.parse_args(["vocab-propose", str(tmp_path), "--min-photos", "2"]).min_photos == 2
+    accept = parser.parse_args(["vocab-accept", str(tmp_path), "garden", "--category", "place", "--scope", "core", "--alias", "yard"])
+    assert accept.cmd == "vocab-accept"
+    assert accept.alias == ["yard"]
+    assert parser.parse_args(["vocab-reject", str(tmp_path), "nice"]).cmd == "vocab-reject"
+    merge = parser.parse_args(["vocab-merge", str(tmp_path), "backyard", "garden"])
+    assert merge.alias == "backyard"
+    assert merge.canonical == "garden"
+    assert parser.parse_args(["vocab-apply", str(tmp_path)]).cmd == "vocab-apply"
+
+
+def test_parser_accepts_vlm_analyze_command(tmp_path):
+    from kiokufux.cli import _build_parser
+
+    args = _build_parser().parse_args(["vlm-analyze", str(tmp_path), "--vlm-backend", "ollama", "--ollama-url", "http://gaming-pc:11434", "--ollama-model", "llava:latest", "--vlm-timeout", "3", "--limit", "3", "--force"])
+
+    assert args.cmd == "vlm-analyze"
+    assert args.vlm_backend == "ollama"
+    assert args.ollama_url == "http://gaming-pc:11434"
+    assert args.ollama_model == "llava:latest"
+    assert args.vlm_timeout == 3
+    assert args.limit == 3
+    assert args.force is True
+
+
+def test_privacy_notice_for_vlm_analyze_is_local_only():
+    from argparse import Namespace
+    from kiokufux.cli import PRIVACY_LOCAL_NOTICE, _privacy_notice
+    from kiokufux.config import KiokuFuxConfig
+
+    cfg = KiokuFuxConfig()
+    cfg.embeddings.backend = "auto"
+
+    assert _privacy_notice(Namespace(cmd="vlm-analyze", embedding_backend=None), cfg) == PRIVACY_LOCAL_NOTICE

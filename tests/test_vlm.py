@@ -1,0 +1,67 @@
+from pathlib import Path
+
+from kiokufux.vlm import FakeVisionLanguageBackend, parse_image_analysis
+
+
+def test_parse_image_analysis_structured_json():
+    analysis = parse_image_analysis(
+        "id1",
+        {
+            "caption": "A dog in a garden.",
+            "objects": ["Dog", "Table"],
+            "scene": "Garden",
+            "activity": "playing",
+            "aesthetic": ["snapshot"],
+            "candidate_tags": [{"tag": "Dog", "confidence": 1.7, "category_hint": "object", "evidence": "dog visible"}],
+            "uncertain_tags": ["birthday"],
+            "warnings": ["event uncertain"],
+        },
+        source="vlm-test",
+        model_name="model",
+        model_version="v1",
+    )
+
+    assert analysis.caption == "A dog in a garden."
+    assert analysis.objects == ["dog", "table"]
+    assert analysis.scene == "Garden"
+    assert analysis.candidate_tags[0].tag == "dog"
+    assert analysis.candidate_tags[0].confidence == 1.0
+    assert analysis.candidate_tags[0].evidence == "dog visible"
+    assert analysis.uncertain_tags[0].tag == "birthday"
+
+
+def test_fake_vlm_backend_prefers_accepted_vocabulary(tmp_path):
+    image = tmp_path / "family-garden.jpg"
+    image.write_text("x")
+
+    raw = FakeVisionLanguageBackend().analyze_image(Path(image), accepted_vocabulary=["garden"])
+
+    assert raw["caption"] == "Local fake VLM analysis for family-garden.jpg."
+    assert raw["candidate_tags"][0]["tag"] == "garden"
+    assert raw["candidate_tags"][0]["category_hint"] == "vocabulary"
+
+
+def test_ollama_backend_posts_image_and_parses_json_response(tmp_path):
+    from kiokufux.vlm import OllamaVisionLanguageBackend
+
+    image = tmp_path / "garden.jpg"
+    image.write_bytes(b"image-bytes")
+    backend = OllamaVisionLanguageBackend(base_url="http://gaming-pc:11434", model="llava:latest", timeout=3)
+    calls = []
+
+    def fake_post(path, payload):
+        calls.append((path, payload))
+        return {"response": '{"caption":"A garden.","candidate_tags":[{"tag":"garden","confidence":0.9,"category_hint":"place","evidence":"plants visible"}]}' }
+
+    backend._post_json = fake_post
+
+    raw = backend.analyze_image(image, accepted_vocabulary=["garden"])
+
+    assert raw["caption"] == "A garden."
+    assert raw["candidate_tags"][0]["tag"] == "garden"
+    assert calls[0][0] == "/api/generate"
+    assert calls[0][1]["model"] == "llava:latest"
+    assert calls[0][1]["format"] == "json"
+    assert calls[0][1]["stream"] is False
+    assert calls[0][1]["images"] == ["aW1hZ2UtYnl0ZXM="]
+    assert "accepted vocabulary" in calls[0][1]["prompt"]

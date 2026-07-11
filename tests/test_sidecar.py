@@ -38,6 +38,7 @@ def test_export_sidecars_includes_vlm_analysis_and_proposal_evidence(tmp_path):
         model_name="fake",
         model_version="test",
         caption="A garden photo.",
+        description="A complete garden description.",
         objects=["table"],
         scene="garden",
         candidate_tags=[ImageAnalysisTag("garden", 0.88, "place", "green plants visible")],
@@ -47,6 +48,8 @@ def test_export_sidecars_includes_vlm_analysis_and_proposal_evidence(tmp_path):
     doc = json.loads((tmp_path / "garden.jpg.kiokufux.json").read_text())
 
     assert doc["semantic"]["caption"] == "A garden photo."
+    assert doc["semantic"]["description"] == "A complete garden description."
+    assert doc["semantic"]["vlm"]["description"] == "A complete garden description."
     assert doc["semantic"]["vlm"]["objects"] == ["table"]
     assert doc["review"]["tag_proposals"] == [{
         "category_hint": "place",

@@ -12,7 +12,8 @@ def sidecar_document(photo, embedding_model: str | None = None, tags: list | Non
     tag_proposals = tag_proposals or []
     proposal_evidence = proposal_evidence or {}
     caption = image_analysis.caption if image_analysis is not None else None
-    vlm = None if image_analysis is None else {"model": image_analysis.model_name, "model_version": image_analysis.model_version, "source": image_analysis.source, "scene": image_analysis.scene, "activity": image_analysis.activity, "objects": image_analysis.objects, "aesthetic": image_analysis.aesthetic, "warnings": image_analysis.warnings}
+    description = image_analysis.description if image_analysis is not None else None
+    vlm = None if image_analysis is None else {"model": image_analysis.model_name, "model_version": image_analysis.model_version, "source": image_analysis.source, "description": image_analysis.description, "scene": image_analysis.scene, "activity": image_analysis.activity, "objects": image_analysis.objects, "aesthetic": image_analysis.aesthetic, "warnings": image_analysis.warnings}
     proposals = []
     for p in tag_proposals:
         item = {"tag": p.tag, "confidence": p.confidence, "source": p.source, "status": p.status}
@@ -25,7 +26,7 @@ def sidecar_document(photo, embedding_model: str | None = None, tags: list | Non
     return {
         "schema": SCHEMA, "photo_id": photo.photo_id, "source_path": str(photo.source_path), "file_hash": photo.file_hash,
         "metadata": {"width": photo.width, "height": photo.height, "datetime_original": photo.exif_datetime_original, "gps": {"lat": photo.exif_gps_lat, "lon": photo.exif_gps_lon}},
-        "semantic": {"embedding_model": embedding_model, "auto_tags": [t.tag for t in tags if t.source == "auto"], "caption": caption, "vlm": vlm, "status": photo.embedding_status},
+        "semantic": {"embedding_model": embedding_model, "auto_tags": [t.tag for t in tags if t.source == "auto"], "caption": caption, "description": description, "vlm": vlm, "status": photo.embedding_status},
         "review": {"state": "unreviewed", "tags": [t.tag for t in tags if t.source == "manual"], "tag_proposals": proposals},
     }
 

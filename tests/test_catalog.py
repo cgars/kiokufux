@@ -104,6 +104,7 @@ def test_catalog_stores_vlm_analysis_and_evidence(tmp_path):
         model_name="fake",
         model_version="test",
         caption="A garden photo.",
+        description="A complete garden description.",
         objects=["table"],
         scene="garden",
         candidate_tags=[ImageAnalysisTag("garden", 0.88, "place", "green plants visible")],
@@ -112,6 +113,7 @@ def test_catalog_stores_vlm_analysis_and_evidence(tmp_path):
     stored = c.get_image_analysis("id1")
     assert stored is not None
     assert stored.caption == "A garden photo."
+    assert stored.description == "A complete garden description."
     assert stored.objects == ["table"]
     proposals = c.list_tag_proposals("id1")
     assert proposals[0].tag == "garden"

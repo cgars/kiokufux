@@ -133,7 +133,7 @@ def test_tag_review_alias_and_accept_all_parser(tmp_path):
     assert accept_photo_args.tag is None
 
 
-def test_print_tag_proposals_groups_all_images(capsys):
+def test_print_tag_proposals_uses_aligned_table(capsys):
     from pathlib import Path
 
     from kiokufux.cli import _print_tag_proposals
@@ -151,13 +151,13 @@ def test_print_tag_proposals_groups_all_images(capsys):
 
     _print_tag_proposals(rows, photos)
 
-    assert capsys.readouterr().out.splitlines() == [
-        "abcdef1\tcat.jpg:",
-        "  - cat\tconfidence=0.91\tstatus=pending\tsource=ai-zero-shot",
-        "  - pet\tconfidence=0.81\tstatus=pending\tsource=ai-zero-shot",
-        "1234567\tdog.jpg:",
-        "  - dog\tconfidence=0.71\tstatus=pending\tsource=ai-zero-shot",
-    ]
+    output = capsys.readouterr().out.splitlines()
+
+    assert output[0].startswith("photo")
+    assert "file" in output[0]
+    assert "conf" in output[0]
+    assert any("abcdef1" in line and "cat.jpg" in line and "cat" in line and "0.91" in line for line in output)
+    assert any("1234567" in line and "dog.jpg" in line and "dog" in line and "0.71" in line for line in output)
 
 
 def test_print_tag_proposal_summary(capsys):
@@ -168,9 +168,11 @@ def test_print_tag_proposal_summary(capsys):
         TagProposalSummary("garden", "ai-zero-shot", "pending", 3, 2, 0.756, 0.91),
     ])
 
-    assert capsys.readouterr().out.splitlines() == [
-        "garden\tphotos=2\tproposals=3\tavg_confidence=0.76\tmax_confidence=0.91\tstatus=pending\tsource=ai-zero-shot",
-    ]
+    output = capsys.readouterr().out.splitlines()
+
+    assert output[0].startswith("tag")
+    assert "photos" in output[0]
+    assert any("garden" in line and "2" in line and "3" in line and "0.76" in line for line in output)
 
 
 def test_parser_accepts_tag_summary_command(tmp_path):
@@ -190,9 +192,11 @@ def test_print_vocabulary(capsys):
         TagVocabularyEntry("garden", "place", "core", "accepted", "outdoor", ["yard"], "common scene", "created", "updated"),
     ])
 
-    assert capsys.readouterr().out.splitlines() == [
-        "garden\tcategory=place\tscope=core\tstatus=accepted\tparent=outdoor\taliases=yard\tnotes=common scene",
-    ]
+    output = capsys.readouterr().out.splitlines()
+
+    assert output[0].startswith("tag")
+    assert "category" in output[0]
+    assert any("garden" in line and "place" in line and "accepted" in line and "yard" in line for line in output)
 
 
 def test_parser_accepts_vocabulary_commands(tmp_path):
@@ -209,6 +213,8 @@ def test_parser_accepts_vocabulary_commands(tmp_path):
     assert merge.alias == "backyard"
     assert merge.canonical == "garden"
     assert parser.parse_args(["vocab-apply", str(tmp_path)]).cmd == "vocab-apply"
+    assert parser.parse_args(["descriptions", str(tmp_path)]).cmd == "descriptions"
+    assert parser.parse_args(["vlm-descriptions", str(tmp_path), "abcdef1"]).photo_id == "abcdef1"
 
 
 def test_parser_accepts_vlm_analyze_command(tmp_path):
@@ -234,3 +240,19 @@ def test_privacy_notice_for_vlm_analyze_is_local_only():
     cfg.embeddings.backend = "auto"
 
     assert _privacy_notice(Namespace(cmd="vlm-analyze", embedding_backend=None), cfg) == PRIVACY_LOCAL_NOTICE
+
+
+def test_print_descriptions_uses_aligned_table(capsys, tmp_path):
+    from kiokufux.cli import _print_descriptions
+    from kiokufux.models import Photo
+    from kiokufux.vlm import ImageAnalysis
+
+    photo = Photo("abcdef123", tmp_path / "garden.jpg", "garden.jpg", "hash")
+    analysis = ImageAnalysis("abcdef123", "vlm-test", "fake", "test", caption="A garden.", description="A longer garden description with plants and a table.")
+
+    _print_descriptions([(photo, analysis)])
+
+    output = capsys.readouterr().out.splitlines()
+    assert output[0].startswith("photo")
+    assert "description" in output[0]
+    assert any("abcdef1" in line and "garden.jpg" in line and "A garden." in line for line in output)

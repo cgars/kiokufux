@@ -45,6 +45,7 @@ kiokufux tag PATH PHOTO_ID "family party"
 kiokufux auto-tag PATH
 kiokufux vlm-analyze PATH
 kiokufux vlm-analyze PATH --vlm-backend ollama --ollama-url http://HOST:11434 --ollama-model MODEL
+kiokufux descriptions PATH [PHOTO_ID]
 kiokufux tag-summary PATH
 kiokufux vocab-propose PATH
 kiokufux vocab PATH
@@ -75,6 +76,7 @@ kiokufux tag ./photos PHOTO_ID_FROM_SEARCH "family party"
 kiokufux auto-tag ./photos
 kiokufux vlm-analyze ./photos --vlm-backend fake
 kiokufux vlm-analyze ./photos --vlm-backend ollama --ollama-url http://gaming-pc:11434 --ollama-model llava
+kiokufux descriptions ./photos
 kiokufux tag-summary ./photos
 kiokufux vocab-propose ./photos
 kiokufux vocab-accept ./photos garden --category place --scope core --alias yard
@@ -168,7 +170,7 @@ kiokufux untag ./photos PHOTO_ID dog
 
 Manual tags are stored in SQLite and exported into sidecars under `review.tags`. KiokuFux can also generate local AI-assisted tag proposals with `kiokufux auto-tag ./photos`; this uses the configured embedding backend for zero-shot image/text similarity between each photo and candidate tag labels from `.kiokufux/config.toml` (or `--candidate-tags` for one run). Proposals remain pending until reviewed with `kiokufux tag-summary`, `kiokufux tag-review` (or `kiokufux tag-proposals`) and then accepted with `kiokufux accept-tag` or rejected with `kiokufux reject-tag`. `kiokufux tag-summary ./photos` prints recurring proposed tags aggregated by tag, source, status, image count, proposal count, average confidence, and maximum confidence so users can review collection-level concepts before inspecting individual photos.
 
-KiokuFux includes a VLM analysis layer that stores structured per-image analysis and turns VLM candidate tags into pending review proposals. The default backend is `--vlm-backend fake`, a deterministic local backend used to wire and test the pipeline without adding heavyweight model dependencies. For real VLM analysis, `--vlm-backend ollama` can call a local or LAN Ollama server, for example `--ollama-url http://gaming-pc:11434 --ollama-model llava`, and sends images to Ollama's `/api/generate` endpoint with JSON output requested. VLM captions and analysis are exported into sidecars under `semantic.caption` and `semantic.vlm`, while VLM tag evidence is exported with review proposals.
+KiokuFux includes a VLM analysis layer that stores structured per-image analysis and turns VLM candidate tags into pending review proposals. The default backend is `--vlm-backend fake`, a deterministic local backend used to wire and test the pipeline without adding heavyweight model dependencies. For real VLM analysis, `--vlm-backend ollama` can call a local or LAN Ollama server, for example `--ollama-url http://gaming-pc:11434 --ollama-model llava`, and sends images to Ollama's `/api/generate` endpoint with JSON output requested. VLM captions, complete descriptions, and analysis are exported into sidecars under `semantic.caption`, `semantic.description`, and `semantic.vlm`; VLM tag evidence is exported with review proposals. Use `kiokufux descriptions ./photos` to print VLM captions/descriptions in an aligned table.
 
 For a remote Ollama machine, pass the server root URL, not the generate endpoint. For example, use `--ollama-url http://gaming-pc:11434`; KiokuFux appends `/api/generate` itself. If you get a 404, rerun with `-v` to print the endpoint being called and the current image, or `-vv` for debug-level skip messages.
 

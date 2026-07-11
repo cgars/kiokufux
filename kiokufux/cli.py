@@ -90,6 +90,27 @@ def _format_search_result(index: int, result: SearchResult, summary: bool = Fals
     )
 
 
+
+def _print_table(headers: list[str], rows: list[list[str]]) -> None:
+    if not rows:
+        print("(none)")
+        return
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for index, cell in enumerate(row):
+            widths[index] = max(widths[index], len(cell))
+    print("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
+    print("  ".join("-" * width for width in widths))
+    for row in rows:
+        print("  ".join(cell.ljust(widths[index]) for index, cell in enumerate(row)))
+
+
+def _shorten(text: str | None, max_len: int = 88) -> str:
+    if not text:
+        return "-"
+    cleaned = " ".join(text.split())
+    return cleaned if len(cleaned) <= max_len else cleaned[: max_len - 1] + "…"
+
 def _proposal_photo_label(photo_id: str, photos: dict[str, Photo]) -> str:
     photo = photos.get(photo_id)
     filename = Path(photo.relative_path).name if photo is not None else "(unknown)"
@@ -97,32 +118,33 @@ def _proposal_photo_label(photo_id: str, photos: dict[str, Photo]) -> str:
 
 
 def _print_tag_proposal_summary(rows: list[TagProposalSummary]) -> None:
-    for row in rows:
-        print(
-            f"{row.tag}\tphotos={row.photo_count}\tproposals={row.proposal_count}"
-            f"\tavg_confidence={row.avg_confidence:.2f}\tmax_confidence={row.max_confidence:.2f}"
-            f"\tstatus={row.status}\tsource={row.source}"
-        )
+    _print_table(
+        ["tag", "photos", "proposals", "avg", "max", "status", "source"],
+        [[row.tag, str(row.photo_count), str(row.proposal_count), f"{row.avg_confidence:.2f}", f"{row.max_confidence:.2f}", row.status, row.source] for row in rows],
+    )
 
 
 def _print_vocabulary(rows: list[TagVocabularyEntry]) -> None:
-    for row in rows:
-        aliases = ",".join(row.aliases) if row.aliases else "-"
-        parent = row.parent or "-"
-        notes = row.notes or ""
-        print(
-            f"{row.tag}\tcategory={row.category}\tscope={row.scope}\tstatus={row.status}"
-            f"\tparent={parent}\taliases={aliases}\tnotes={notes}"
-        )
+    _print_table(
+        ["tag", "category", "scope", "status", "parent", "aliases", "notes"],
+        [[row.tag, row.category, row.scope, row.status, row.parent or "-", ", ".join(row.aliases) if row.aliases else "-", row.notes or "-"] for row in rows],
+    )
 
 
 def _print_tag_proposals(rows: list[TagProposal], photos: dict[str, Photo]) -> None:
-    current_photo_id: str | None = None
+    table_rows = []
     for row in rows:
-        if row.photo_id != current_photo_id:
-            current_photo_id = row.photo_id
-            print(f"{_proposal_photo_label(row.photo_id, photos)}:")
-        print(f"  - {row.tag}\tconfidence={row.confidence:.2f}\tstatus={row.status}\tsource={row.source}")
+        photo = photos.get(row.photo_id)
+        filename = Path(photo.relative_path).name if photo is not None else "(unknown)"
+        table_rows.append([row.photo_id[:7], filename, row.tag, f"{row.confidence:.2f}", row.status, row.source])
+    _print_table(["photo", "file", "tag", "conf", "status", "source"], table_rows)
+
+
+def _print_descriptions(rows: list[tuple[Photo, object]]) -> None:
+    table_rows = []
+    for photo, analysis in rows:
+        table_rows.append([photo.photo_id[:7], Path(photo.relative_path).name, analysis.source, _shorten(analysis.caption, 48), _shorten(analysis.description)])
+    _print_table(["photo", "file", "source", "caption", "description"], table_rows)
 
 
 def _extract_verbose_args(argv: list[str]) -> tuple[list[str], int]:
@@ -199,6 +221,9 @@ def _build_parser() -> argparse.ArgumentParser:
     vlm.add_argument("--vlm-timeout", type=float, default=120.0, help="VLM request timeout in seconds")
     vlm.add_argument("--limit", type=int)
     vlm.add_argument("--force", action="store_true", help="Re-analyze photos that already have VLM analysis")
+    descriptions = sub.add_parser("descriptions", aliases=["vlm-descriptions"])
+    descriptions.add_argument("path", type=Path)
+    descriptions.add_argument("photo_id", nargs="?")
     proposals = sub.add_parser("tag-proposals", aliases=["tag-review"])
     proposals.add_argument("path", type=Path)
     proposals.add_argument("photo_id", nargs="?")
@@ -383,6 +408,17 @@ def main(argv: list[str] | None = None) -> int:
                 )
             logger.info("Generated %s VLM image analyses", analyzed)
             print(f"Generated {analyzed} VLM image analyses")
+        elif args.cmd in {"descriptions", "vlm-descriptions"}:
+            if args.photo_id:
+                try:
+                    resolved = cat.resolve_photo_id(args.photo_id)
+                except ValueError as exc:
+                    parser.error(str(exc))
+                photo = cat.get_photo(resolved)
+                analysis = cat.get_image_analysis(resolved)
+                _print_descriptions([(photo, analysis)] if photo is not None and analysis is not None else [])
+            else:
+                _print_descriptions(cat.list_image_analyses())
         elif args.cmd in {"tag-proposals", "tag-review"}:
             status = None if args.status == "all" else args.status
             rows = cat.list_tag_proposals(args.photo_id, status=status)

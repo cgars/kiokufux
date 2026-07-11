@@ -75,7 +75,7 @@ class Catalog:
             );
             CREATE TABLE IF NOT EXISTS image_analyses (
               photo_id TEXT NOT NULL, source TEXT NOT NULL, model_name TEXT NOT NULL, model_version TEXT NOT NULL,
-              caption TEXT, scene TEXT, activity TEXT, objects_json TEXT NOT NULL DEFAULT '[]',
+              caption TEXT, description TEXT, scene TEXT, activity TEXT, objects_json TEXT NOT NULL DEFAULT '[]',
               aesthetic_json TEXT NOT NULL DEFAULT '[]', warnings_json TEXT NOT NULL DEFAULT '[]',
               raw_response_json TEXT, created_at TEXT NOT NULL,
               PRIMARY KEY (photo_id, source, model_name, model_version),
@@ -96,22 +96,31 @@ class Catalog:
             CREATE INDEX IF NOT EXISTS idx_tag_aliases_tag ON tag_aliases(tag);
             """
         )
+        self._ensure_column("image_analyses", "description", "TEXT")
         self.conn.commit()
+
+    def _ensure_column(self, table: str, column: str, definition: str) -> None:
+        rows = self.conn.execute(f"PRAGMA table_info({table})").fetchall()
+        if column not in {str(row["name"]) for row in rows}:
+            self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def upsert_image_analysis(self, analysis: ImageAnalysis) -> None:
         created_at = analysis.created_at or now_iso()
         self.conn.execute(
             """
-            INSERT INTO image_analyses VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO image_analyses (
+              photo_id, source, model_name, model_version, caption, description, scene, activity,
+              objects_json, aesthetic_json, warnings_json, raw_response_json, created_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(photo_id, source, model_name, model_version) DO UPDATE SET
-              caption=excluded.caption, scene=excluded.scene, activity=excluded.activity,
+              caption=excluded.caption, description=excluded.description, scene=excluded.scene, activity=excluded.activity,
               objects_json=excluded.objects_json, aesthetic_json=excluded.aesthetic_json,
               warnings_json=excluded.warnings_json, raw_response_json=excluded.raw_response_json,
               created_at=excluded.created_at
             """,
             (
                 analysis.photo_id, analysis.source, analysis.model_name, analysis.model_version,
-                analysis.caption, analysis.scene, analysis.activity,
+                analysis.caption, analysis.description, analysis.scene, analysis.activity,
                 json.dumps(analysis.objects, sort_keys=True),
                 json.dumps(analysis.aesthetic, sort_keys=True),
                 json.dumps(analysis.warnings, sort_keys=True),
@@ -141,12 +150,20 @@ class Catalog:
         return ImageAnalysis(
             photo_id=str(row["photo_id"]), source=str(row["source"]),
             model_name=str(row["model_name"]), model_version=str(row["model_version"]),
-            caption=row["caption"], scene=row["scene"], activity=row["activity"],
+            caption=row["caption"], description=row["description"], scene=row["scene"], activity=row["activity"],
             objects=json.loads(row["objects_json"]), aesthetic=json.loads(row["aesthetic_json"]),
             warnings=json.loads(row["warnings_json"]),
             raw_response=json.loads(row["raw_response_json"]) if row["raw_response_json"] else None,
             created_at=str(row["created_at"]),
         )
+
+    def list_image_analyses(self) -> list[tuple[Photo, ImageAnalysis]]:
+        analyses: list[tuple[Photo, ImageAnalysis]] = []
+        for photo in self.list_photos(include_missing=True):
+            analysis = self.get_image_analysis(photo.photo_id)
+            if analysis is not None:
+                analyses.append((photo, analysis))
+        return analyses
 
     def tag_proposal_evidence(self, photo_id: str) -> dict[tuple[str, str], dict[str, str | None]]:
         rows = self.conn.execute(

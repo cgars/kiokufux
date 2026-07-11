@@ -350,19 +350,37 @@ def main(argv: list[str] | None = None) -> int:
                 timeout=args.vlm_timeout,
             )
             accepted_vocabulary = [entry.tag for entry in cat.list_vocabulary(status="accepted")]
+            photos = cat.list_photos()
+            logger.info(
+                "VLM analyze starting: backend=%s model=%s photos=%s limit=%s force=%s accepted_vocabulary=%s",
+                backend.source, backend.model_version, len(photos), args.limit, args.force, len(accepted_vocabulary),
+            )
+            if hasattr(backend, "endpoint_url"):
+                logger.info("VLM Ollama endpoint: %s", backend.endpoint_url())
             analyzed = 0
-            for photo in cat.list_photos():
+            for photo in photos:
                 if args.limit is not None and analyzed >= args.limit:
                     break
                 if not args.force and cat.get_image_analysis(photo.photo_id) is not None:
+                    logger.debug("Skipping existing VLM analysis for %s (%s)", photo.relative_path, photo.photo_id[:7])
                     continue
-                raw = backend.analyze_image(photo.source_path, accepted_vocabulary=accepted_vocabulary)
-                analysis = parse_image_analysis(
-                    photo.photo_id, raw, source=backend.source,
-                    model_name=backend.model_name, model_version=backend.model_version,
-                )
-                cat.upsert_image_analysis(analysis)
+                logger.info("Analyzing %s (%s) with %s", photo.relative_path, photo.photo_id[:7], backend.source)
+                try:
+                    raw = backend.analyze_image(photo.source_path, accepted_vocabulary=accepted_vocabulary)
+                    analysis = parse_image_analysis(
+                        photo.photo_id, raw, source=backend.source,
+                        model_name=backend.model_name, model_version=backend.model_version,
+                    )
+                    cat.upsert_image_analysis(analysis)
+                except Exception as exc:
+                    logger.error("VLM analysis failed for %s (%s): %s", photo.relative_path, photo.photo_id[:7], exc)
+                    print(f"VLM analysis failed for {photo.relative_path}: {exc}", file=sys.stderr)
+                    return 1
                 analyzed += 1
+                logger.info(
+                    "Stored VLM analysis for %s: candidate_tags=%s uncertain_tags=%s",
+                    photo.relative_path, len(analysis.candidate_tags), len(analysis.uncertain_tags),
+                )
             logger.info("Generated %s VLM image analyses", analyzed)
             print(f"Generated {analyzed} VLM image analyses")
         elif args.cmd in {"tag-proposals", "tag-review"}:

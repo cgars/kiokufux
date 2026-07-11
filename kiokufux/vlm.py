@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
+import urllib.error
+import urllib.parse
 import urllib.request
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -10,6 +12,7 @@ from typing import Any
 
 
 VLM_SOURCE = "vlm-fake"
+OLLAMA_GENERATE_PATH = "/api/generate"
 
 
 @dataclass(slots=True)
@@ -78,6 +81,10 @@ class FakeVisionLanguageBackend(VisionLanguageBackend):
         }
 
 
+class OllamaRequestError(RuntimeError):
+    pass
+
+
 class OllamaVisionLanguageBackend(VisionLanguageBackend):
     """Vision backend for local or LAN-hosted Ollama servers."""
 
@@ -91,7 +98,7 @@ class OllamaVisionLanguageBackend(VisionLanguageBackend):
         timeout: float = 120.0,
         prompt: str = IMAGE_ANALYSIS_PROMPT,
     ) -> None:
-        self.base_url = base_url.rstrip("/")
+        self.base_url = _normalize_ollama_base_url(base_url)
         self.ollama_model = model
         self.model_version = model
         self.timeout = timeout
@@ -108,19 +115,57 @@ class OllamaVisionLanguageBackend(VisionLanguageBackend):
             "format": "json",
             "stream": False,
         }
-        response = self._post_json("/api/generate", payload)
+        response = self._post_json(OLLAMA_GENERATE_PATH, payload)
         generated = response.get("response", response)
         return json.loads(generated) if isinstance(generated, str) else dict(generated)
 
+    def endpoint_url(self, path: str = OLLAMA_GENERATE_PATH) -> str:
+        return self.base_url + path
+
+    def request_summary(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "url": self.endpoint_url(),
+            "model": payload.get("model"),
+            "format": payload.get("format"),
+            "stream": payload.get("stream"),
+            "image_count": len(payload.get("images", [])),
+            "prompt_chars": len(str(payload.get("prompt", ""))),
+            "timeout": self.timeout,
+        }
+
     def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        url = self.base_url + path
         request = urllib.request.Request(
-            self.base_url + path,
+            url,
             data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=self.timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")[:500]
+            hint = ""
+            if exc.code == 404:
+                hint = " Hint: use the Ollama server root as --ollama-url, e.g. http://gaming-pc:11434, not /api/generate; also verify the server is Ollama and reachable from this machine."
+            raise OllamaRequestError(f"Ollama request failed: HTTP {exc.code} {exc.reason} at {url}.{hint} Response body: {body}") from exc
+        except urllib.error.URLError as exc:
+            raise OllamaRequestError(f"Ollama request failed at {url}: {exc.reason}") from exc
+
+
+def _normalize_ollama_base_url(base_url: str) -> str:
+    url = base_url.strip().rstrip("/")
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in {"http", "https"}:
+        url = "http://" + url
+        parsed = urllib.parse.urlsplit(url)
+    path = parsed.path.rstrip("/")
+    if path.endswith(OLLAMA_GENERATE_PATH):
+        path = path[: -len(OLLAMA_GENERATE_PATH)]
+    if path == "/api":
+        path = ""
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, "", "")).rstrip("/")
 
 
 def backend_from_name(

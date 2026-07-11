@@ -65,3 +65,62 @@ def test_ollama_backend_posts_image_and_parses_json_response(tmp_path):
     assert calls[0][1]["stream"] is False
     assert calls[0][1]["images"] == ["aW1hZ2UtYnl0ZXM="]
     assert "accepted vocabulary" in calls[0][1]["prompt"]
+
+
+def test_ollama_backend_normalizes_generate_url_and_bare_host():
+    from kiokufux.vlm import OllamaVisionLanguageBackend
+
+    assert OllamaVisionLanguageBackend(base_url="gaming-pc:11434").endpoint_url() == "http://gaming-pc:11434/api/generate"
+    assert OllamaVisionLanguageBackend(base_url="http://gaming-pc:11434/api/generate").endpoint_url() == "http://gaming-pc:11434/api/generate"
+    assert OllamaVisionLanguageBackend(base_url="http://gaming-pc:11434/api").endpoint_url() == "http://gaming-pc:11434/api/generate"
+
+
+def test_ollama_request_summary_does_not_include_base64_image(tmp_path):
+    from kiokufux.vlm import OllamaVisionLanguageBackend
+
+    image = tmp_path / "garden.jpg"
+    image.write_bytes(b"image-bytes")
+    backend = OllamaVisionLanguageBackend(base_url="http://gaming-pc:11434", model="llava:latest", timeout=3)
+    captured = {}
+
+    def fake_post(path, payload):
+        captured.update(backend.request_summary(payload))
+        return {"response": "{}"}
+
+    backend._post_json = fake_post
+    backend.analyze_image(image)
+
+    assert captured == {
+        "url": "http://gaming-pc:11434/api/generate",
+        "model": "llava:latest",
+        "format": "json",
+        "stream": False,
+        "image_count": 1,
+        "prompt_chars": len(backend.prompt),
+        "timeout": 3,
+    }
+    assert "images" not in captured
+
+
+def test_ollama_404_error_mentions_endpoint_and_root_url_hint(monkeypatch):
+    import io
+    import urllib.error
+
+    from kiokufux.vlm import OllamaRequestError, OllamaVisionLanguageBackend
+
+    def fake_urlopen(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, 404, "Not Found", hdrs={}, fp=io.BytesIO(b"missing"))
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    backend = OllamaVisionLanguageBackend(base_url="http://gaming-pc:11434/api/generate")
+
+    try:
+        backend._post_json("/api/generate", {"model": "llava"})
+    except OllamaRequestError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("expected OllamaRequestError")
+
+    assert "HTTP 404 Not Found" in message
+    assert "http://gaming-pc:11434/api/generate" in message
+    assert "use the Ollama server root" in message

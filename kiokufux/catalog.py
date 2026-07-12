@@ -128,6 +128,28 @@ class Catalog:
                 created_at,
             ),
         )
+        latest_tags = {normalize_tag(tag.tag) for tag in [*analysis.candidate_tags, *analysis.uncertain_tags]}
+        latest_tags.discard("")
+        if latest_tags:
+            placeholders = ",".join("?" for _ in latest_tags)
+            stale_params = [analysis.photo_id, analysis.source, *sorted(latest_tags)]
+            self.conn.execute(
+                f"DELETE FROM tag_proposals WHERE photo_id=? AND source=? AND status='pending' AND tag NOT IN ({placeholders})",
+                stale_params,
+            )
+            self.conn.execute(
+                f"DELETE FROM tag_proposal_evidence WHERE photo_id=? AND source=? AND tag NOT IN ({placeholders})",
+                stale_params,
+            )
+        else:
+            self.conn.execute(
+                "DELETE FROM tag_proposals WHERE photo_id=? AND source=? AND status='pending'",
+                (analysis.photo_id, analysis.source),
+            )
+            self.conn.execute(
+                "DELETE FROM tag_proposal_evidence WHERE photo_id=? AND source=?",
+                (analysis.photo_id, analysis.source),
+            )
         for tag in analysis.candidate_tags:
             self.propose_tag(
                 analysis.photo_id, tag.tag, tag.confidence, source=analysis.source,
@@ -289,7 +311,10 @@ class Catalog:
         if normalized_alias == normalized_tag:
             return
         self.conn.execute(
-            "INSERT OR IGNORE INTO tag_aliases VALUES (?,?,?)",
+            """
+            INSERT INTO tag_aliases VALUES (?,?,?)
+            ON CONFLICT(alias) DO UPDATE SET tag=excluded.tag, created_at=excluded.created_at
+            """,
             (normalized_alias, normalized_tag, now_iso()),
         )
 
@@ -358,11 +383,11 @@ class Catalog:
             )
         self.conn.commit()
 
-    def apply_vocabulary_to_tag_proposals(self, source: str = "ai-zero-shot") -> int:
+    def apply_vocabulary_to_tag_proposals(self, source: str | None = None) -> int:
         proposals = self.list_tag_proposals(status="pending")
         changed = 0
         for proposal in proposals:
-            if proposal.source != source:
+            if source is not None and proposal.source != source:
                 continue
             canonical = self.canonical_tag(proposal.tag)
             row = self.conn.execute("SELECT status FROM tag_vocabulary WHERE tag=?", (canonical,)).fetchone()
@@ -502,14 +527,14 @@ class Catalog:
         self.add_tag(photo_id, normalized, source="auto")
         self.set_tag_proposal_status(photo_id, normalized, "accepted", source=source)
 
-    def accept_tag_proposals(self, photo_id: str | None = None, source: str = "ai-zero-shot") -> int:
+    def accept_tag_proposals(self, photo_id: str | None = None, source: str | None = None) -> int:
         proposals = self.list_tag_proposals(photo_id, status="pending")
         accepted = 0
         for proposal in proposals:
-            if proposal.source != source:
+            if source is not None and proposal.source != source:
                 continue
             self.add_tag(proposal.photo_id, proposal.tag, source="auto")
-            self.set_tag_proposal_status(proposal.photo_id, proposal.tag, "accepted", source=source)
+            self.set_tag_proposal_status(proposal.photo_id, proposal.tag, "accepted", source=proposal.source)
             accepted += 1
         return accepted
 

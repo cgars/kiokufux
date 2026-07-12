@@ -19,6 +19,10 @@ from .vlm import backend_from_name, parse_image_analysis
 LOGGER_NAME = "kiokufux"
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 PRIVACY_LOCAL_NOTICE = "Online services: no photo, metadata, or query data will be sent; processing is local."
+VLM_REMOTE_NOTICE = (
+    "Online services: photos will be sent to the configured Ollama endpoint for VLM analysis; "
+    "metadata and query data remain local."
+)
 OPENCLIP_DOWNLOAD_NOTICE = (
     "Online services: no photo, metadata, or query data will be sent; "
     "OpenCLIP may contact the network only to download model weights if they are not cached."
@@ -66,6 +70,10 @@ def _embedding_backend(args: argparse.Namespace, config: KiokuFuxConfig):
 
 def _privacy_notice(args: argparse.Namespace, config: KiokuFuxConfig | None = None) -> str:
     if getattr(args, "cmd", None) == "vlm-analyze":
+        backend = getattr(args, "vlm_backend", None)
+        url = str(getattr(args, "ollama_url", "") or "")
+        if backend == "ollama" and not (url.startswith("http://localhost") or url.startswith("http://127.0.0.1") or url.startswith("http://[::1]")):
+            return VLM_REMOTE_NOTICE
         return PRIVACY_LOCAL_NOTICE
     if getattr(args, "cmd", None) not in {"embed", "search", "auto-tag"}:
         return PRIVACY_LOCAL_NOTICE
@@ -213,6 +221,7 @@ def _build_parser() -> argparse.ArgumentParser:
     vocab_merge.add_argument("canonical")
     vocab_apply = sub.add_parser("vocab-apply")
     vocab_apply.add_argument("path", type=Path)
+    vocab_apply.add_argument("--source", help="Only apply vocabulary to proposals from this source (default: all sources)")
     vlm = sub.add_parser("vlm-analyze")
     vlm.add_argument("path", type=Path)
     vlm.add_argument("--vlm-backend", default="fake", choices=["fake", "ollama"])
@@ -233,10 +242,12 @@ def _build_parser() -> argparse.ArgumentParser:
     accept.add_argument("photo_id", nargs="?")
     accept.add_argument("tag", nargs="?")
     accept.add_argument("--all", action="store_true", help="Accept all pending tag proposals, optionally limited to PHOTO_ID")
+    accept.add_argument("--source", help="Proposal source to accept (default: any source)")
     reject = sub.add_parser("reject-tag")
     reject.add_argument("path", type=Path)
     reject.add_argument("photo_id")
     reject.add_argument("tag")
+    reject.add_argument("--source", help="Proposal source to reject (default: ai-zero-shot)")
     e = sub.add_parser("embed")
     e.add_argument("path", type=Path)
     _add_embedding_options(e)
@@ -364,7 +375,7 @@ def main(argv: list[str] | None = None) -> int:
             logger.info("Merged vocabulary alias %s into %s", args.alias, args.canonical)
             print(f"Merged vocabulary alias: {args.alias} -> {args.canonical}")
         elif args.cmd == "vocab-apply":
-            changed = cat.apply_vocabulary_to_tag_proposals()
+            changed = cat.apply_vocabulary_to_tag_proposals(source=args.source)
             logger.info("Applied vocabulary to %s tag proposals", changed)
             print(f"Applied vocabulary to {changed} tag proposals")
         elif args.cmd == "vlm-analyze":
@@ -431,18 +442,18 @@ def main(argv: list[str] | None = None) -> int:
                 except ValueError as exc:
                     parser.error(str(exc))
             if args.all:
-                accepted = cat.accept_tag_proposals(args.photo_id)
+                accepted = cat.accept_tag_proposals(args.photo_id, source=args.source)
                 scope = args.photo_id[:7] if args.photo_id else "all images"
                 logger.info("Accepted %s pending tag proposals for %s", accepted, scope)
                 print(f"Accepted {accepted} pending tag proposals for {scope}")
             else:
                 if not args.photo_id or not args.tag:
                     parser.error("accept-tag requires PHOTO_ID and TAG unless --all is used")
-                cat.accept_tag_proposal(args.photo_id, args.tag)
+                cat.accept_tag_proposal(args.photo_id, args.tag, source=args.source or "ai-zero-shot")
                 logger.info("Accepted tag proposal %s for %s", args.tag, args.photo_id)
                 print(f"Accepted tag for {args.photo_id}: {args.tag}")
         elif args.cmd == "reject-tag":
-            cat.reject_tag_proposal(args.photo_id, args.tag)
+            cat.reject_tag_proposal(args.photo_id, args.tag, source=args.source or "ai-zero-shot")
             logger.info("Rejected tag proposal %s for %s", args.tag, args.photo_id)
             print(f"Rejected tag for {args.photo_id}: {args.tag}")
     return 0

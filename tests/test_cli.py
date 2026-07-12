@@ -256,3 +256,29 @@ def test_print_descriptions_uses_aligned_table(capsys, tmp_path):
     assert output[0].startswith("photo")
     assert "description" in output[0]
     assert any("abcdef1" in line and "garden.jpg" in line and "A garden." in line for line in output)
+
+
+def test_privacy_notice_for_remote_ollama_warns_photos_are_sent():
+    from argparse import Namespace
+    from kiokufux.cli import VLM_REMOTE_NOTICE, _privacy_notice
+
+    notice = _privacy_notice(Namespace(cmd="vlm-analyze", vlm_backend="ollama", ollama_url="http://gaming-pc:11434"))
+
+    assert notice == VLM_REMOTE_NOTICE
+    assert "photos will be sent" in notice
+
+
+def test_privacy_notice_for_local_ollama_remains_local_only():
+    from argparse import Namespace
+    from kiokufux.cli import PRIVACY_LOCAL_NOTICE, _privacy_notice
+
+    assert _privacy_notice(Namespace(cmd="vlm-analyze", vlm_backend="ollama", ollama_url="http://localhost:11434")) == PRIVACY_LOCAL_NOTICE
+
+
+def test_parser_accepts_review_source_options(tmp_path):
+    from kiokufux.cli import _build_parser
+
+    parser = _build_parser()
+    assert parser.parse_args(["vocab-apply", str(tmp_path), "--source", "vlm-fake"]).source == "vlm-fake"
+    assert parser.parse_args(["accept-tag", str(tmp_path), "abcdef1", "garden", "--source", "vlm-fake"]).source == "vlm-fake"
+    assert parser.parse_args(["reject-tag", str(tmp_path), "abcdef1", "garden", "--source", "vlm-fake"]).source == "vlm-fake"

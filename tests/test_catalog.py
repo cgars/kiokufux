@@ -119,3 +119,55 @@ def test_catalog_stores_vlm_analysis_and_evidence(tmp_path):
     assert proposals[0].tag == "garden"
     assert proposals[0].source == "vlm-test"
     assert c.tag_proposal_evidence("id1")[("garden", "vlm-test")] == {"category_hint": "place", "evidence": "green plants visible"}
+
+
+def test_catalog_merge_updates_existing_alias_mapping(tmp_path):
+    c = Catalog(tmp_path / "catalog.sqlite"); c.init_schema()
+    c.upsert_vocabulary_tag("garden", status="accepted")
+    c.upsert_vocabulary_tag("park", status="accepted")
+    c.add_tag_alias("yard", "garden")
+
+    c.merge_vocabulary_tag("yard", "park")
+
+    assert c.canonical_tag("yard") == "park"
+
+
+def test_catalog_reanalysis_removes_stale_pending_vlm_proposals_and_evidence(tmp_path):
+    from kiokufux.vlm import ImageAnalysis, ImageAnalysisTag
+
+    c = Catalog(tmp_path / "catalog.sqlite"); c.init_schema()
+    c.upsert_photo(Photo("id1", tmp_path / "garden.jpg", "garden.jpg", "hash1"))
+    c.upsert_image_analysis(ImageAnalysis(
+        photo_id="id1",
+        source="vlm-test",
+        model_name="fake",
+        model_version="test",
+        candidate_tags=[ImageAnalysisTag("garden", 0.88, "place", "green plants visible")],
+    ))
+    c.upsert_image_analysis(ImageAnalysis(
+        photo_id="id1",
+        source="vlm-test",
+        model_name="fake",
+        model_version="test",
+        candidate_tags=[ImageAnalysisTag("patio", 0.77, "place", "chairs visible")],
+    ))
+
+    proposals = c.list_tag_proposals("id1")
+    assert [(proposal.tag, proposal.source) for proposal in proposals] == [("patio", "vlm-test")]
+    assert ("garden", "vlm-test") not in c.tag_proposal_evidence("id1")
+    assert c.tag_proposal_evidence("id1")[("patio", "vlm-test")]["evidence"] == "chairs visible"
+
+
+def test_catalog_review_actions_can_target_any_proposal_source_by_default(tmp_path):
+    c = Catalog(tmp_path / "catalog.sqlite"); c.init_schema()
+    c.upsert_photo(Photo("id1", tmp_path / "a.jpg", "a.jpg", "hash1"))
+    c.propose_tag("id1", "garden", 0.8, source="vlm-test")
+    c.upsert_vocabulary_tag("garden", status="accepted")
+
+    assert c.accept_tag_proposals() == 1
+    assert c.list_tag_proposals("id1", status=None)[0].status == "accepted"
+
+    c.propose_tag("id1", "patio", 0.7, source="vlm-test")
+    c.upsert_vocabulary_tag("patio", status="rejected")
+    assert c.apply_vocabulary_to_tag_proposals() == 1
+    assert {p.tag: p.status for p in c.list_tag_proposals("id1", status=None)}["patio"] == "rejected"

@@ -9,15 +9,20 @@ from .autotagging import EmbeddingAutoTagger, normalize_candidate_tags, propose_
 from .catalog import Catalog
 from .config import KiokuFuxConfig, catalog_path, ensure_workspace, load_config, write_default_config
 from .embeddings import backend_from_options, generate_embeddings
-from .models import Photo, SearchResult, TagProposal
+from .models import Photo, SearchResult, TagProposal, TagProposalSummary, TagVocabularyEntry
 from .scanner import scan as scan_folder
 from .search import search as run_search
 from .sidecar import export_sidecars
 from .thumbnails import generate_thumbnails
+from .vlm import backend_from_name, parse_image_analysis
 
 LOGGER_NAME = "kiokufux"
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 PRIVACY_LOCAL_NOTICE = "Online services: no photo, metadata, or query data will be sent; processing is local."
+VLM_REMOTE_NOTICE = (
+    "Online services: photos will be sent to the configured Ollama endpoint for VLM analysis; "
+    "metadata and query data remain local."
+)
 OPENCLIP_DOWNLOAD_NOTICE = (
     "Online services: no photo, metadata, or query data will be sent; "
     "OpenCLIP may contact the network only to download model weights if they are not cached."
@@ -64,6 +69,12 @@ def _embedding_backend(args: argparse.Namespace, config: KiokuFuxConfig):
 
 
 def _privacy_notice(args: argparse.Namespace, config: KiokuFuxConfig | None = None) -> str:
+    if getattr(args, "cmd", None) == "vlm-analyze":
+        backend = getattr(args, "vlm_backend", None)
+        url = str(getattr(args, "ollama_url", "") or "")
+        if backend == "ollama" and not (url.startswith("http://localhost") or url.startswith("http://127.0.0.1") or url.startswith("http://[::1]")):
+            return VLM_REMOTE_NOTICE
+        return PRIVACY_LOCAL_NOTICE
     if getattr(args, "cmd", None) not in {"embed", "search", "auto-tag"}:
         return PRIVACY_LOCAL_NOTICE
     configured_backend = config.embeddings.backend if config is not None else None
@@ -87,19 +98,61 @@ def _format_search_result(index: int, result: SearchResult, summary: bool = Fals
     )
 
 
+
+def _print_table(headers: list[str], rows: list[list[str]]) -> None:
+    if not rows:
+        print("(none)")
+        return
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for index, cell in enumerate(row):
+            widths[index] = max(widths[index], len(cell))
+    print("  ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
+    print("  ".join("-" * width for width in widths))
+    for row in rows:
+        print("  ".join(cell.ljust(widths[index]) for index, cell in enumerate(row)))
+
+
+def _shorten(text: str | None, max_len: int = 88) -> str:
+    if not text:
+        return "-"
+    cleaned = " ".join(text.split())
+    return cleaned if len(cleaned) <= max_len else cleaned[: max_len - 1] + "…"
+
 def _proposal_photo_label(photo_id: str, photos: dict[str, Photo]) -> str:
     photo = photos.get(photo_id)
     filename = Path(photo.relative_path).name if photo is not None else "(unknown)"
     return f"{photo_id[:7]}\t{filename}"
 
 
+def _print_tag_proposal_summary(rows: list[TagProposalSummary]) -> None:
+    _print_table(
+        ["tag", "photos", "proposals", "avg", "max", "status", "source"],
+        [[row.tag, str(row.photo_count), str(row.proposal_count), f"{row.avg_confidence:.2f}", f"{row.max_confidence:.2f}", row.status, row.source] for row in rows],
+    )
+
+
+def _print_vocabulary(rows: list[TagVocabularyEntry]) -> None:
+    _print_table(
+        ["tag", "category", "scope", "status", "parent", "aliases", "notes"],
+        [[row.tag, row.category, row.scope, row.status, row.parent or "-", ", ".join(row.aliases) if row.aliases else "-", row.notes or "-"] for row in rows],
+    )
+
+
 def _print_tag_proposals(rows: list[TagProposal], photos: dict[str, Photo]) -> None:
-    current_photo_id: str | None = None
+    table_rows = []
     for row in rows:
-        if row.photo_id != current_photo_id:
-            current_photo_id = row.photo_id
-            print(f"{_proposal_photo_label(row.photo_id, photos)}:")
-        print(f"  - {row.tag}\tconfidence={row.confidence:.2f}\tstatus={row.status}\tsource={row.source}")
+        photo = photos.get(row.photo_id)
+        filename = Path(photo.relative_path).name if photo is not None else "(unknown)"
+        table_rows.append([row.photo_id[:7], filename, row.tag, f"{row.confidence:.2f}", row.status, row.source])
+    _print_table(["photo", "file", "tag", "conf", "status", "source"], table_rows)
+
+
+def _print_descriptions(rows: list[tuple[Photo, object]]) -> None:
+    table_rows = []
+    for photo, analysis in rows:
+        table_rows.append([photo.photo_id[:7], Path(photo.relative_path).name, analysis.source, _shorten(analysis.caption, 48), _shorten(analysis.description)])
+    _print_table(["photo", "file", "source", "caption", "description"], table_rows)
 
 
 def _extract_verbose_args(argv: list[str]) -> tuple[list[str], int]:
@@ -141,6 +194,45 @@ def _build_parser() -> argparse.ArgumentParser:
     auto_tag.add_argument("--top-k", type=int, help="Maximum AI tag proposals per photo")
     auto_tag.add_argument("--min-score", type=float, help="Minimum image/text similarity for AI tag proposals")
     _add_embedding_options(auto_tag)
+    summary = sub.add_parser("tag-summary")
+    summary.add_argument("path", type=Path)
+    summary.add_argument("--status", default="pending", choices=["pending", "accepted", "rejected", "all"])
+    vocab = sub.add_parser("vocab")
+    vocab.add_argument("path", type=Path)
+    vocab.add_argument("--status", default="all", choices=["proposed", "accepted", "rejected", "all"])
+    vocab_propose = sub.add_parser("vocab-propose")
+    vocab_propose.add_argument("path", type=Path)
+    vocab_propose.add_argument("--min-photos", type=int, default=1)
+    vocab_accept = sub.add_parser("vocab-accept")
+    vocab_accept.add_argument("path", type=Path)
+    vocab_accept.add_argument("tag")
+    vocab_accept.add_argument("--category", default="uncategorized")
+    vocab_accept.add_argument("--scope", default="optional", choices=["core", "collection-specific", "optional"])
+    vocab_accept.add_argument("--parent")
+    vocab_accept.add_argument("--alias", action="append", default=[])
+    vocab_accept.add_argument("--notes")
+    vocab_reject = sub.add_parser("vocab-reject")
+    vocab_reject.add_argument("path", type=Path)
+    vocab_reject.add_argument("tag")
+    vocab_reject.add_argument("--notes")
+    vocab_merge = sub.add_parser("vocab-merge")
+    vocab_merge.add_argument("path", type=Path)
+    vocab_merge.add_argument("alias")
+    vocab_merge.add_argument("canonical")
+    vocab_apply = sub.add_parser("vocab-apply")
+    vocab_apply.add_argument("path", type=Path)
+    vocab_apply.add_argument("--source", help="Only apply vocabulary to proposals from this source (default: all sources)")
+    vlm = sub.add_parser("vlm-analyze")
+    vlm.add_argument("path", type=Path)
+    vlm.add_argument("--vlm-backend", default="fake", choices=["fake", "ollama"])
+    vlm.add_argument("--ollama-url", default="http://localhost:11434", help="Base URL for local or LAN Ollama server")
+    vlm.add_argument("--ollama-model", default="llava", help="Ollama vision model name")
+    vlm.add_argument("--vlm-timeout", type=float, default=120.0, help="VLM request timeout in seconds")
+    vlm.add_argument("--limit", type=int)
+    vlm.add_argument("--force", action="store_true", help="Re-analyze photos that already have VLM analysis")
+    descriptions = sub.add_parser("descriptions", aliases=["vlm-descriptions"])
+    descriptions.add_argument("path", type=Path)
+    descriptions.add_argument("photo_id", nargs="?")
     proposals = sub.add_parser("tag-proposals", aliases=["tag-review"])
     proposals.add_argument("path", type=Path)
     proposals.add_argument("photo_id", nargs="?")
@@ -150,10 +242,12 @@ def _build_parser() -> argparse.ArgumentParser:
     accept.add_argument("photo_id", nargs="?")
     accept.add_argument("tag", nargs="?")
     accept.add_argument("--all", action="store_true", help="Accept all pending tag proposals, optionally limited to PHOTO_ID")
+    accept.add_argument("--source", help="Proposal source to accept (default: any source)")
     reject = sub.add_parser("reject-tag")
     reject.add_argument("path", type=Path)
     reject.add_argument("photo_id")
     reject.add_argument("tag")
+    reject.add_argument("--source", help="Proposal source to reject (default: ai-zero-shot)")
     e = sub.add_parser("embed")
     e.add_argument("path", type=Path)
     _add_embedding_options(e)
@@ -257,6 +351,85 @@ def main(argv: list[str] | None = None) -> int:
             proposed = propose_tags(cat, tagger)
             logger.info("Generated %s tag proposals", proposed)
             print(f"Generated {proposed} tag proposals for review")
+        elif args.cmd == "tag-summary":
+            status = None if args.status == "all" else args.status
+            rows = cat.summarize_tag_proposals(status=status)
+            _print_tag_proposal_summary(rows)
+        elif args.cmd == "vocab":
+            status = None if args.status == "all" else args.status
+            _print_vocabulary(cat.list_vocabulary(status=status))
+        elif args.cmd == "vocab-propose":
+            created = cat.propose_vocabulary_from_tag_proposals(min_photos=args.min_photos)
+            logger.info("Created %s vocabulary proposals", created)
+            print(f"Created {created} vocabulary proposals")
+        elif args.cmd == "vocab-accept":
+            cat.upsert_vocabulary_tag(args.tag, category=args.category, scope=args.scope, status="accepted", parent=args.parent, aliases=args.alias, notes=args.notes)
+            logger.info("Accepted vocabulary tag %s", args.tag)
+            print(f"Accepted vocabulary tag: {args.tag}")
+        elif args.cmd == "vocab-reject":
+            cat.upsert_vocabulary_tag(args.tag, status="rejected", notes=args.notes)
+            logger.info("Rejected vocabulary tag %s", args.tag)
+            print(f"Rejected vocabulary tag: {args.tag}")
+        elif args.cmd == "vocab-merge":
+            cat.merge_vocabulary_tag(args.alias, args.canonical)
+            logger.info("Merged vocabulary alias %s into %s", args.alias, args.canonical)
+            print(f"Merged vocabulary alias: {args.alias} -> {args.canonical}")
+        elif args.cmd == "vocab-apply":
+            changed = cat.apply_vocabulary_to_tag_proposals(source=args.source)
+            logger.info("Applied vocabulary to %s tag proposals", changed)
+            print(f"Applied vocabulary to {changed} tag proposals")
+        elif args.cmd == "vlm-analyze":
+            backend = backend_from_name(
+                args.vlm_backend,
+                ollama_url=args.ollama_url,
+                ollama_model=args.ollama_model,
+                timeout=args.vlm_timeout,
+            )
+            accepted_vocabulary = [entry.tag for entry in cat.list_vocabulary(status="accepted")]
+            photos = cat.list_photos()
+            logger.info(
+                "VLM analyze starting: backend=%s model=%s photos=%s limit=%s force=%s accepted_vocabulary=%s",
+                backend.source, backend.model_version, len(photos), args.limit, args.force, len(accepted_vocabulary),
+            )
+            if hasattr(backend, "endpoint_url"):
+                logger.info("VLM Ollama endpoint: %s", backend.endpoint_url())
+            analyzed = 0
+            for photo in photos:
+                if args.limit is not None and analyzed >= args.limit:
+                    break
+                if not args.force and cat.get_image_analysis(photo.photo_id) is not None:
+                    logger.debug("Skipping existing VLM analysis for %s (%s)", photo.relative_path, photo.photo_id[:7])
+                    continue
+                logger.info("Analyzing %s (%s) with %s", photo.relative_path, photo.photo_id[:7], backend.source)
+                try:
+                    raw = backend.analyze_image(photo.source_path, accepted_vocabulary=accepted_vocabulary)
+                    analysis = parse_image_analysis(
+                        photo.photo_id, raw, source=backend.source,
+                        model_name=backend.model_name, model_version=backend.model_version,
+                    )
+                    cat.upsert_image_analysis(analysis)
+                except Exception as exc:
+                    logger.error("VLM analysis failed for %s (%s): %s", photo.relative_path, photo.photo_id[:7], exc)
+                    print(f"VLM analysis failed for {photo.relative_path}: {exc}", file=sys.stderr)
+                    return 1
+                analyzed += 1
+                logger.info(
+                    "Stored VLM analysis for %s: candidate_tags=%s uncertain_tags=%s",
+                    photo.relative_path, len(analysis.candidate_tags), len(analysis.uncertain_tags),
+                )
+            logger.info("Generated %s VLM image analyses", analyzed)
+            print(f"Generated {analyzed} VLM image analyses")
+        elif args.cmd in {"descriptions", "vlm-descriptions"}:
+            if args.photo_id:
+                try:
+                    resolved = cat.resolve_photo_id(args.photo_id)
+                except ValueError as exc:
+                    parser.error(str(exc))
+                photo = cat.get_photo(resolved)
+                analysis = cat.get_image_analysis(resolved)
+                _print_descriptions([(photo, analysis)] if photo is not None and analysis is not None else [])
+            else:
+                _print_descriptions(cat.list_image_analyses())
         elif args.cmd in {"tag-proposals", "tag-review"}:
             status = None if args.status == "all" else args.status
             rows = cat.list_tag_proposals(args.photo_id, status=status)
@@ -269,18 +442,18 @@ def main(argv: list[str] | None = None) -> int:
                 except ValueError as exc:
                     parser.error(str(exc))
             if args.all:
-                accepted = cat.accept_tag_proposals(args.photo_id)
+                accepted = cat.accept_tag_proposals(args.photo_id, source=args.source)
                 scope = args.photo_id[:7] if args.photo_id else "all images"
                 logger.info("Accepted %s pending tag proposals for %s", accepted, scope)
                 print(f"Accepted {accepted} pending tag proposals for {scope}")
             else:
                 if not args.photo_id or not args.tag:
                     parser.error("accept-tag requires PHOTO_ID and TAG unless --all is used")
-                cat.accept_tag_proposal(args.photo_id, args.tag)
+                cat.accept_tag_proposal(args.photo_id, args.tag, source=args.source or "ai-zero-shot")
                 logger.info("Accepted tag proposal %s for %s", args.tag, args.photo_id)
                 print(f"Accepted tag for {args.photo_id}: {args.tag}")
         elif args.cmd == "reject-tag":
-            cat.reject_tag_proposal(args.photo_id, args.tag)
+            cat.reject_tag_proposal(args.photo_id, args.tag, source=args.source or "ai-zero-shot")
             logger.info("Rejected tag proposal %s for %s", args.tag, args.photo_id)
             print(f"Rejected tag for {args.photo_id}: {args.tag}")
     return 0

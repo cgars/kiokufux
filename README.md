@@ -43,6 +43,16 @@ kiokufux search PATH "query text" --summary
 kiokufux -v search PATH "query text" --summary
 kiokufux tag PATH PHOTO_ID "family party"
 kiokufux auto-tag PATH
+kiokufux vlm-analyze PATH
+kiokufux vlm-analyze PATH --vlm-backend ollama --ollama-url http://HOST:11434 --ollama-model MODEL
+kiokufux descriptions PATH [PHOTO_ID]
+kiokufux tag-summary PATH
+kiokufux vocab-propose PATH
+kiokufux vocab PATH
+kiokufux vocab-accept PATH TAG [--category CATEGORY] [--scope core|collection-specific|optional]
+kiokufux vocab-reject PATH TAG
+kiokufux vocab-merge PATH ALIAS CANONICAL_TAG
+kiokufux vocab-apply PATH
 kiokufux tag-proposals PATH [PHOTO_ID]
 kiokufux tag-review PATH [PHOTO_ID]
 kiokufux accept-tag PATH PHOTO_ID_OR_7_CHAR_PREFIX TAG
@@ -64,6 +74,14 @@ kiokufux search ./photos "red car in front of a house"
 kiokufux search ./photos "red car in front of a house" --summary
 kiokufux tag ./photos PHOTO_ID_FROM_SEARCH "family party"
 kiokufux auto-tag ./photos
+kiokufux vlm-analyze ./photos --vlm-backend fake
+kiokufux vlm-analyze ./photos --vlm-backend ollama --ollama-url http://gaming-pc:11434 --ollama-model llava
+kiokufux descriptions ./photos
+kiokufux tag-summary ./photos
+kiokufux vocab-propose ./photos
+kiokufux vocab-accept ./photos garden --category place --scope core --alias yard
+kiokufux vocab-merge ./photos backyard garden
+kiokufux vocab-apply ./photos
 kiokufux tag-review ./photos
 kiokufux tag-proposals ./photos PHOTO_ID_FROM_SEARCH
 kiokufux accept-tag ./photos PHOTO_ID_OR_7_CHAR_PREFIX dog
@@ -150,7 +168,16 @@ kiokufux tags ./photos PHOTO_ID
 kiokufux untag ./photos PHOTO_ID dog
 ```
 
-Manual tags are stored in SQLite and exported into sidecars under `review.tags`. KiokuFux can also generate local AI-assisted tag proposals with `kiokufux auto-tag ./photos`; this uses the configured embedding backend for zero-shot image/text similarity between each photo and candidate tag labels from `.kiokufux/config.toml` (or `--candidate-tags` for one run). Proposals remain pending until reviewed with `kiokufux tag-review` (or `kiokufux tag-proposals`) and then accepted with `kiokufux accept-tag` or rejected with `kiokufux reject-tag`. Running `kiokufux tag-review ./photos` without a photo ID prints a grouped list of all images that have proposed tags, showing each image filename and the first seven characters of its photo ID; adding a photo ID limits review output to that image. To accept every pending proposal, use `kiokufux accept-tag ./photos --all`; add either the full photo ID or its first seven characters before `--all` to accept all pending proposals for only that image. Single-proposal accepts also allow either the full photo ID or its first seven characters. Accepted AI proposals are stored as `source=auto` tags and exported under `semantic.auto_tags`; pending/rejected proposals are exported under `review.tag_proposals` for review. No image data is sent to online services for MVP1 auto-tagging, though OpenCLIP may download model weights if selected and uncached.
+Manual tags are stored in SQLite and exported into sidecars under `review.tags`. KiokuFux can also generate local AI-assisted tag proposals with `kiokufux auto-tag ./photos`; this uses the configured embedding backend for zero-shot image/text similarity between each photo and candidate tag labels from `.kiokufux/config.toml` (or `--candidate-tags` for one run). Proposals remain pending until reviewed with `kiokufux tag-summary`, `kiokufux tag-review` (or `kiokufux tag-proposals`) and then accepted with `kiokufux accept-tag` or rejected with `kiokufux reject-tag`. `kiokufux tag-summary ./photos` prints recurring proposed tags aggregated by tag, source, status, image count, proposal count, average confidence, and maximum confidence so users can review collection-level concepts before inspecting individual photos.
+
+KiokuFux includes a VLM analysis layer that stores structured per-image analysis and turns VLM candidate tags into pending review proposals. The default backend is `--vlm-backend fake`, a deterministic local backend used to wire and test the pipeline without adding heavyweight model dependencies. For real VLM analysis, `--vlm-backend ollama` can call a local or LAN Ollama server, for example `--ollama-url http://gaming-pc:11434 --ollama-model llava`, and sends images to Ollama's `/api/generate` endpoint with JSON output requested. VLM captions, complete descriptions, and analysis are exported into sidecars under `semantic.caption`, `semantic.description`, and `semantic.vlm`; VLM tag evidence is exported with review proposals. Use `kiokufux descriptions ./photos` to print VLM captions/descriptions in an aligned table.
+
+For a remote Ollama machine, pass the server root URL, not the generate endpoint. For example, use `--ollama-url http://gaming-pc:11434`; KiokuFux appends `/api/generate` itself. If you get a 404, rerun with `-v` to print the endpoint being called and the current image, or `-vv` for debug-level skip messages.
+
+
+KiokuFux also supports a local controlled vocabulary workflow. `kiokufux vocab-propose ./photos` promotes recurring pending tag proposals into vocabulary candidates. Review candidates with `kiokufux vocab ./photos`, accept canonical tags with categories/scopes via `kiokufux vocab-accept`, reject unwanted tags with `kiokufux vocab-reject`, and merge synonyms with `kiokufux vocab-merge ALIAS CANONICAL_TAG`. `kiokufux vocab-apply ./photos` then applies accepted vocabulary tags to matching pending proposals, using aliases to store canonical tags and using rejected vocabulary entries as persistent reject memory. This implements the curated-vocabulary part of the workflow while remaining local-first.
+
+Running `kiokufux tag-review ./photos` without a photo ID prints a grouped list of all images that have proposed tags, showing each image filename and the first seven characters of its photo ID; adding a photo ID limits review output to that image. To accept every pending proposal, use `kiokufux accept-tag ./photos --all`; add either the full photo ID or its first seven characters before `--all` to accept all pending proposals for only that image. Single-proposal accepts also allow either the full photo ID or its first seven characters. Accepted AI proposals are stored as `source=auto` tags and exported under `semantic.auto_tags`; pending/rejected proposals are exported under `review.tag_proposals` for review. No image data is sent to online services for MVP1 auto-tagging, though OpenCLIP may download model weights if selected and uncached.
 
 ## Sidecars
 
@@ -165,6 +192,6 @@ Manual tags are stored in SQLite and exported into sidecars under `review.tags`.
 
 ## Suggested next MVPs
 
-- MVP 2: stronger local model setup, optional approximate vector indexes, and richer auto-tags/captions.
+- MVP 2: stronger local model setup, optional approximate vector indexes, and real local VLM backends for richer auto-tags/captions.
 - MVP 3: review workflows and safer bulk-edit tooling using sidecars only.
 - MVP 4: optional desktop UI for browsing, search, and curation.

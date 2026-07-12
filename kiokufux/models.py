@@ -57,6 +57,30 @@ class TagProposal:
 
 
 @dataclass(slots=True)
+class TagVocabularyEntry:
+    tag: str
+    category: str
+    scope: str
+    status: str
+    parent: str | None
+    aliases: list[str]
+    notes: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(slots=True)
+class TagProposalSummary:
+    tag: str
+    source: str
+    status: str
+    proposal_count: int
+    photo_count: int
+    avg_confidence: float
+    max_confidence: float
+
+
+@dataclass(slots=True)
 class SearchResult:
     photo_id: str
     score: float

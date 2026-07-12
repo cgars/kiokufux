@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from pathlib import Path
 
 from .catalog import Catalog
@@ -28,10 +29,14 @@ def scan(root: Path, catalog: Catalog, logger: logging.Logger) -> tuple[int, int
             photo_id = photo_id_for_hash(file_hash)
             seen.append(photo_id)
             existing = catalog.get_photo(photo_id)
+            resolved = path.resolve()
             if existing and existing.file_hash == file_hash and not existing.error:
+                if existing.missing or existing.source_path != resolved or existing.relative_path != rel:
+                    catalog.upsert_photo(replace(existing, source_path=resolved, relative_path=rel, missing=False, error=None))
+                    indexed += 1
                 continue
             meta = extract_metadata(path)
-            catalog.upsert_photo(Photo(photo_id=photo_id, source_path=path.resolve(), relative_path=rel, file_hash=file_hash, **meta))
+            catalog.upsert_photo(Photo(photo_id=photo_id, source_path=resolved, relative_path=rel, file_hash=file_hash, **meta))
             indexed += 1
         except Exception as exc:
             errors += 1; logger.exception("Failed to scan %s", path)

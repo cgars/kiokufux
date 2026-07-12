@@ -36,3 +36,185 @@ def test_catalog_resolves_full_or_seven_character_photo_ids(tmp_path):
 
     assert c.resolve_photo_id("abcdef1") == "abcdef123456"
     assert c.resolve_photo_id("abcdef123456") == "abcdef123456"
+
+
+def test_catalog_summarizes_tag_proposals_by_tag_status_and_source(tmp_path):
+    c = Catalog(tmp_path / "catalog.sqlite"); c.init_schema()
+    c.upsert_photo(Photo("id1", tmp_path / "a.jpg", "a.jpg", "hash1"))
+    c.upsert_photo(Photo("id2", tmp_path / "b.jpg", "b.jpg", "hash2"))
+    c.propose_tag("id1", "Dog", 0.8)
+    c.propose_tag("id2", "dog", 0.6)
+    c.propose_tag("id2", "cat", 0.9)
+    c.reject_tag_proposal("id2", "cat")
+
+    pending = c.summarize_tag_proposals()
+
+    assert len(pending) == 1
+    assert pending[0].tag == "dog"
+    assert pending[0].photo_count == 2
+    assert pending[0].proposal_count == 2
+    assert pending[0].avg_confidence == 0.7
+    assert pending[0].max_confidence == 0.8
+    assert pending[0].status == "pending"
+
+    all_rows = c.summarize_tag_proposals(status=None)
+    assert [(row.tag, row.status) for row in all_rows] == [("dog", "pending"), ("cat", "rejected")]
+
+
+def test_catalog_vocabulary_propose_accept_merge_and_apply(tmp_path):
+    c = Catalog(tmp_path / "catalog.sqlite"); c.init_schema()
+    for photo_id in ["id1", "id2"]:
+        c.upsert_photo(Photo(photo_id, tmp_path / f"{photo_id}.jpg", f"{photo_id}.jpg", f"hash-{photo_id}"))
+    c.propose_tag("id1", "backyard", 0.8)
+    c.propose_tag("id2", "garden", 0.9)
+
+    assert c.propose_vocabulary_from_tag_proposals() == 2
+    proposed = {entry.tag: entry for entry in c.list_vocabulary(status="proposed")}
+    assert set(proposed) == {"backyard", "garden"}
+
+    c.upsert_vocabulary_tag("garden", category="place", scope="core", status="accepted", aliases=["yard"])
+    c.merge_vocabulary_tag("backyard", "garden")
+
+    assert c.canonical_tag("yard") == "garden"
+    assert c.canonical_tag("backyard") == "garden"
+    assert c.apply_vocabulary_to_tag_proposals() == 2
+    assert [tag.tag for tag in c.list_tags("id1")] == ["garden"]
+    assert [tag.tag for tag in c.list_tags("id2")] == ["garden"]
+    assert {p.tag: p.status for p in c.list_tag_proposals(status=None)} == {"backyard": "accepted", "garden": "accepted"}
+
+
+def test_catalog_rejected_vocabulary_rejects_matching_pending_proposals(tmp_path):
+    c = Catalog(tmp_path / "catalog.sqlite"); c.init_schema()
+    c.upsert_photo(Photo("id1", tmp_path / "a.jpg", "a.jpg", "hash1"))
+    c.propose_tag("id1", "nice", 0.7)
+    c.upsert_vocabulary_tag("nice", status="rejected")
+
+    assert c.apply_vocabulary_to_tag_proposals() == 1
+    assert c.list_tag_proposals("id1", status=None)[0].status == "rejected"
+
+
+def test_catalog_stores_vlm_analysis_and_evidence(tmp_path):
+    from kiokufux.vlm import ImageAnalysis, ImageAnalysisTag
+
+    c = Catalog(tmp_path / "catalog.sqlite"); c.init_schema()
+    c.upsert_photo(Photo("id1", tmp_path / "garden.jpg", "garden.jpg", "hash1"))
+    c.upsert_image_analysis(ImageAnalysis(
+        photo_id="id1",
+        source="vlm-test",
+        model_name="fake",
+        model_version="test",
+        caption="A garden photo.",
+        description="A complete garden description.",
+        objects=["table"],
+        scene="garden",
+        candidate_tags=[ImageAnalysisTag("garden", 0.88, "place", "green plants visible")],
+    ))
+
+    stored = c.get_image_analysis("id1")
+    assert stored is not None
+    assert stored.caption == "A garden photo."
+    assert stored.description == "A complete garden description."
+    assert stored.objects == ["table"]
+    proposals = c.list_tag_proposals("id1")
+    assert proposals[0].tag == "garden"
+    assert proposals[0].source == "vlm-test"
+    assert c.tag_proposal_evidence("id1")[("garden", "vlm-test")] == {"category_hint": "place", "evidence": "green plants visible"}
+
+
+def test_catalog_merge_updates_existing_alias_mapping(tmp_path):
+    c = Catalog(tmp_path / "catalog.sqlite"); c.init_schema()
+    c.upsert_vocabulary_tag("garden", status="accepted")
+    c.upsert_vocabulary_tag("park", status="accepted")
+    c.add_tag_alias("yard", "garden")
+
+    c.merge_vocabulary_tag("yard", "park")
+
+    assert c.canonical_tag("yard") == "park"
+
+
+def test_catalog_reanalysis_removes_stale_pending_vlm_proposals_and_evidence(tmp_path):
+    from kiokufux.vlm import ImageAnalysis, ImageAnalysisTag
+
+    c = Catalog(tmp_path / "catalog.sqlite"); c.init_schema()
+    c.upsert_photo(Photo("id1", tmp_path / "garden.jpg", "garden.jpg", "hash1"))
+    c.upsert_image_analysis(ImageAnalysis(
+        photo_id="id1",
+        source="vlm-test",
+        model_name="fake",
+        model_version="test",
+        candidate_tags=[ImageAnalysisTag("garden", 0.88, "place", "green plants visible")],
+    ))
+    c.upsert_image_analysis(ImageAnalysis(
+        photo_id="id1",
+        source="vlm-test",
+        model_name="fake",
+        model_version="test",
+        candidate_tags=[ImageAnalysisTag("patio", 0.77, "place", "chairs visible")],
+    ))
+
+    proposals = c.list_tag_proposals("id1")
+    assert [(proposal.tag, proposal.source) for proposal in proposals] == [("patio", "vlm-test")]
+    assert ("garden", "vlm-test") not in c.tag_proposal_evidence("id1")
+    assert c.tag_proposal_evidence("id1")[("patio", "vlm-test")]["evidence"] == "chairs visible"
+
+
+def test_catalog_review_actions_can_target_any_proposal_source_by_default(tmp_path):
+    c = Catalog(tmp_path / "catalog.sqlite"); c.init_schema()
+    c.upsert_photo(Photo("id1", tmp_path / "a.jpg", "a.jpg", "hash1"))
+    c.propose_tag("id1", "garden", 0.8, source="vlm-test")
+    c.upsert_vocabulary_tag("garden", status="accepted")
+
+    assert c.accept_tag_proposals() == 1
+    assert c.list_tag_proposals("id1", status=None)[0].status == "accepted"
+
+    c.propose_tag("id1", "patio", 0.7, source="vlm-test")
+    c.upsert_vocabulary_tag("patio", status="rejected")
+    assert c.apply_vocabulary_to_tag_proposals() == 1
+    assert {p.tag: p.status for p in c.list_tag_proposals("id1", status=None)}["patio"] == "rejected"
+
+
+def test_scan_restores_readded_photo_without_losing_existing_review_data(tmp_path):
+    import logging
+
+    from kiokufux._np import np
+    from kiokufux.catalog import now_iso
+    from kiokufux.embeddings import FakeEmbeddingBackend
+    from kiokufux.hashing import file_sha256, photo_id_for_hash
+    from kiokufux.models import Embedding
+    from kiokufux.scanner import scan
+    from kiokufux.search import search
+
+    root = tmp_path / "project"
+    root.mkdir()
+    from PIL import Image
+
+    image = root / "image.jpg"
+    Image.new("RGB", (1, 1), color="red").save(image)
+    catalog = Catalog(root / ".kiokufux" / "catalog.sqlite")
+    catalog.init_schema()
+    logger = logging.getLogger("test")
+
+    assert scan(root, catalog, logger) == (1, 0)
+    photo_id = photo_id_for_hash(file_sha256(image))
+    catalog.add_tag(photo_id, "keeper")
+    backend = FakeEmbeddingBackend()
+    embedding_path = root / ".kiokufux" / "embeddings" / f"{photo_id}.fake.npy"
+    embedding_path.parent.mkdir(parents=True)
+    np.save(embedding_path, backend.embed_text("keeper"))
+    catalog.upsert_embedding(Embedding(photo_id, backend.model_name, backend.model_version, backend.dimension, catalog.stored_artifact_path(embedding_path), now_iso()))
+
+    image.unlink()
+    assert scan(root, catalog, logger) == (0, 0)
+    assert catalog.get_photo(photo_id).missing is True
+    assert search(catalog, "keeper", backend=backend) == []
+
+    restored = root / "restored.jpg"
+    Image.new("RGB", (1, 1), color="red").save(restored)
+    assert scan(root, catalog, logger) == (1, 0)
+
+    restored_photo = catalog.get_photo(photo_id)
+    assert restored_photo.missing is False
+    assert restored_photo.relative_path == "restored.jpg"
+    assert [tag.tag for tag in catalog.list_tags(photo_id)] == ["keeper"]
+    assert catalog.list_embeddings(backend.model_name, backend.model_version)[0].photo_id == photo_id
+    assert search(catalog, "keeper", backend=backend)[0].photo_id == photo_id

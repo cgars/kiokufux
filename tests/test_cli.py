@@ -133,7 +133,7 @@ def test_tag_review_alias_and_accept_all_parser(tmp_path):
     assert accept_photo_args.tag is None
 
 
-def test_print_tag_proposals_groups_all_images(capsys):
+def test_print_tag_proposals_uses_aligned_table(capsys):
     from pathlib import Path
 
     from kiokufux.cli import _print_tag_proposals
@@ -151,10 +151,134 @@ def test_print_tag_proposals_groups_all_images(capsys):
 
     _print_tag_proposals(rows, photos)
 
-    assert capsys.readouterr().out.splitlines() == [
-        "abcdef1\tcat.jpg:",
-        "  - cat\tconfidence=0.91\tstatus=pending\tsource=ai-zero-shot",
-        "  - pet\tconfidence=0.81\tstatus=pending\tsource=ai-zero-shot",
-        "1234567\tdog.jpg:",
-        "  - dog\tconfidence=0.71\tstatus=pending\tsource=ai-zero-shot",
-    ]
+    output = capsys.readouterr().out.splitlines()
+
+    assert output[0].startswith("photo")
+    assert "file" in output[0]
+    assert "conf" in output[0]
+    assert any("abcdef1" in line and "cat.jpg" in line and "cat" in line and "0.91" in line for line in output)
+    assert any("1234567" in line and "dog.jpg" in line and "dog" in line and "0.71" in line for line in output)
+
+
+def test_print_tag_proposal_summary(capsys):
+    from kiokufux.cli import _print_tag_proposal_summary
+    from kiokufux.models import TagProposalSummary
+
+    _print_tag_proposal_summary([
+        TagProposalSummary("garden", "ai-zero-shot", "pending", 3, 2, 0.756, 0.91),
+    ])
+
+    output = capsys.readouterr().out.splitlines()
+
+    assert output[0].startswith("tag")
+    assert "photos" in output[0]
+    assert any("garden" in line and "2" in line and "3" in line and "0.76" in line for line in output)
+
+
+def test_parser_accepts_tag_summary_command(tmp_path):
+    from kiokufux.cli import _build_parser
+
+    args = _build_parser().parse_args(["tag-summary", str(tmp_path), "--status", "all"])
+
+    assert args.cmd == "tag-summary"
+    assert args.status == "all"
+
+
+def test_print_vocabulary(capsys):
+    from kiokufux.cli import _print_vocabulary
+    from kiokufux.models import TagVocabularyEntry
+
+    _print_vocabulary([
+        TagVocabularyEntry("garden", "place", "core", "accepted", "outdoor", ["yard"], "common scene", "created", "updated"),
+    ])
+
+    output = capsys.readouterr().out.splitlines()
+
+    assert output[0].startswith("tag")
+    assert "category" in output[0]
+    assert any("garden" in line and "place" in line and "accepted" in line and "yard" in line for line in output)
+
+
+def test_parser_accepts_vocabulary_commands(tmp_path):
+    from kiokufux.cli import _build_parser
+
+    parser = _build_parser()
+    assert parser.parse_args(["vocab", str(tmp_path), "--status", "accepted"]).cmd == "vocab"
+    assert parser.parse_args(["vocab-propose", str(tmp_path), "--min-photos", "2"]).min_photos == 2
+    accept = parser.parse_args(["vocab-accept", str(tmp_path), "garden", "--category", "place", "--scope", "core", "--alias", "yard"])
+    assert accept.cmd == "vocab-accept"
+    assert accept.alias == ["yard"]
+    assert parser.parse_args(["vocab-reject", str(tmp_path), "nice"]).cmd == "vocab-reject"
+    merge = parser.parse_args(["vocab-merge", str(tmp_path), "backyard", "garden"])
+    assert merge.alias == "backyard"
+    assert merge.canonical == "garden"
+    assert parser.parse_args(["vocab-apply", str(tmp_path)]).cmd == "vocab-apply"
+    assert parser.parse_args(["descriptions", str(tmp_path)]).cmd == "descriptions"
+    assert parser.parse_args(["vlm-descriptions", str(tmp_path), "abcdef1"]).photo_id == "abcdef1"
+
+
+def test_parser_accepts_vlm_analyze_command(tmp_path):
+    from kiokufux.cli import _build_parser
+
+    args = _build_parser().parse_args(["vlm-analyze", str(tmp_path), "--vlm-backend", "ollama", "--ollama-url", "http://gaming-pc:11434", "--ollama-model", "llava:latest", "--vlm-timeout", "3", "--limit", "3", "--force"])
+
+    assert args.cmd == "vlm-analyze"
+    assert args.vlm_backend == "ollama"
+    assert args.ollama_url == "http://gaming-pc:11434"
+    assert args.ollama_model == "llava:latest"
+    assert args.vlm_timeout == 3
+    assert args.limit == 3
+    assert args.force is True
+
+
+def test_privacy_notice_for_vlm_analyze_is_local_only():
+    from argparse import Namespace
+    from kiokufux.cli import PRIVACY_LOCAL_NOTICE, _privacy_notice
+    from kiokufux.config import KiokuFuxConfig
+
+    cfg = KiokuFuxConfig()
+    cfg.embeddings.backend = "auto"
+
+    assert _privacy_notice(Namespace(cmd="vlm-analyze", embedding_backend=None), cfg) == PRIVACY_LOCAL_NOTICE
+
+
+def test_print_descriptions_uses_aligned_table(capsys, tmp_path):
+    from kiokufux.cli import _print_descriptions
+    from kiokufux.models import Photo
+    from kiokufux.vlm import ImageAnalysis
+
+    photo = Photo("abcdef123", tmp_path / "garden.jpg", "garden.jpg", "hash")
+    analysis = ImageAnalysis("abcdef123", "vlm-test", "fake", "test", caption="A garden.", description="A longer garden description with plants and a table.")
+
+    _print_descriptions([(photo, analysis)])
+
+    output = capsys.readouterr().out.splitlines()
+    assert output[0].startswith("photo")
+    assert "description" in output[0]
+    assert any("abcdef1" in line and "garden.jpg" in line and "A garden." in line for line in output)
+
+
+def test_privacy_notice_for_remote_ollama_warns_photos_are_sent():
+    from argparse import Namespace
+    from kiokufux.cli import VLM_REMOTE_NOTICE, _privacy_notice
+
+    notice = _privacy_notice(Namespace(cmd="vlm-analyze", vlm_backend="ollama", ollama_url="http://gaming-pc:11434"))
+
+    assert notice == VLM_REMOTE_NOTICE
+    assert "photos will be sent" in notice
+
+
+def test_privacy_notice_for_local_ollama_remains_local_only():
+    from argparse import Namespace
+    from kiokufux.cli import PRIVACY_LOCAL_NOTICE, _privacy_notice
+
+    assert _privacy_notice(Namespace(cmd="vlm-analyze", vlm_backend="ollama", ollama_url="http://localhost:11434")) == PRIVACY_LOCAL_NOTICE
+
+
+def test_parser_accepts_review_source_options(tmp_path):
+    from kiokufux.cli import _build_parser
+
+    parser = _build_parser()
+    assert parser.parse_args(["vocab-apply", str(tmp_path), "--source", "vlm-fake"]).source == "vlm-fake"
+    assert parser.parse_args(["accept-tag", str(tmp_path), "abcdef1", "garden", "--source", "vlm-fake"]).source == "vlm-fake"
+    assert parser.parse_args(["reject-tag", str(tmp_path), "abcdef1", "garden", "--source", "vlm-fake"]).source == "vlm-fake"

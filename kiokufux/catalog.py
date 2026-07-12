@@ -451,7 +451,7 @@ class Catalog:
             """
             INSERT INTO tag_proposals VALUES (?,?,?,?,?,?)
             ON CONFLICT(photo_id, tag, source) DO UPDATE SET
-              confidence=excluded.confidence, status=excluded.status, created_at=excluded.created_at
+              confidence=excluded.confidence, created_at=excluded.created_at
             """,
             (photo_id, normalized, source, float(confidence), "pending", created_at),
         )

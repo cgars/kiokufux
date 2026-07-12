@@ -171,3 +171,50 @@ def test_catalog_review_actions_can_target_any_proposal_source_by_default(tmp_pa
     c.upsert_vocabulary_tag("patio", status="rejected")
     assert c.apply_vocabulary_to_tag_proposals() == 1
     assert {p.tag: p.status for p in c.list_tag_proposals("id1", status=None)}["patio"] == "rejected"
+
+
+def test_scan_restores_readded_photo_without_losing_existing_review_data(tmp_path):
+    import logging
+
+    from kiokufux._np import np
+    from kiokufux.catalog import now_iso
+    from kiokufux.embeddings import FakeEmbeddingBackend
+    from kiokufux.hashing import file_sha256, photo_id_for_hash
+    from kiokufux.models import Embedding
+    from kiokufux.scanner import scan
+    from kiokufux.search import search
+
+    root = tmp_path / "project"
+    root.mkdir()
+    from PIL import Image
+
+    image = root / "image.jpg"
+    Image.new("RGB", (1, 1), color="red").save(image)
+    catalog = Catalog(root / ".kiokufux" / "catalog.sqlite")
+    catalog.init_schema()
+    logger = logging.getLogger("test")
+
+    assert scan(root, catalog, logger) == (1, 0)
+    photo_id = photo_id_for_hash(file_sha256(image))
+    catalog.add_tag(photo_id, "keeper")
+    backend = FakeEmbeddingBackend()
+    embedding_path = root / ".kiokufux" / "embeddings" / f"{photo_id}.fake.npy"
+    embedding_path.parent.mkdir(parents=True)
+    np.save(embedding_path, backend.embed_text("keeper"))
+    catalog.upsert_embedding(Embedding(photo_id, backend.model_name, backend.model_version, backend.dimension, catalog.stored_artifact_path(embedding_path), now_iso()))
+
+    image.unlink()
+    assert scan(root, catalog, logger) == (0, 0)
+    assert catalog.get_photo(photo_id).missing is True
+    assert search(catalog, "keeper", backend=backend) == []
+
+    restored = root / "restored.jpg"
+    Image.new("RGB", (1, 1), color="red").save(restored)
+    assert scan(root, catalog, logger) == (1, 0)
+
+    restored_photo = catalog.get_photo(photo_id)
+    assert restored_photo.missing is False
+    assert restored_photo.relative_path == "restored.jpg"
+    assert [tag.tag for tag in catalog.list_tags(photo_id)] == ["keeper"]
+    assert catalog.list_embeddings(backend.model_name, backend.model_version)[0].photo_id == photo_id
+    assert search(catalog, "keeper", backend=backend)[0].photo_id == photo_id

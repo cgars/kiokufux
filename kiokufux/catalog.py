@@ -251,6 +251,26 @@ class Catalog:
                 self.conn.execute("UPDATE photos SET missing=1, updated_at=? WHERE photo_id=?", (now_iso(), row["photo_id"]))
         self.conn.commit()
 
+
+    def mark_photo_edited(self, photo_id: str, file_hash: str, metadata: dict[str, Any]) -> None:
+        self.conn.execute(
+            """
+            UPDATE photos SET
+              file_hash=?, file_size=?, mime_type=?, width=?, height=?, created_at_file=?, modified_at_file=?,
+              exif_datetime_original=?, exif_gps_lat=?, exif_gps_lon=?, thumbnail_path=NULL,
+              embedding_status='pending', updated_at=?, error=NULL
+            WHERE photo_id=?
+            """,
+            (
+                file_hash, metadata.get("file_size"), metadata.get("mime_type"), metadata.get("width"), metadata.get("height"),
+                metadata.get("created_at_file"), metadata.get("modified_at_file"), metadata.get("exif_datetime_original"),
+                metadata.get("exif_gps_lat"), metadata.get("exif_gps_lon"), now_iso(), photo_id,
+            ),
+        )
+        self.conn.execute("DELETE FROM embeddings WHERE photo_id=?", (photo_id,))
+        self.conn.execute("DELETE FROM image_analyses WHERE photo_id=?", (photo_id,))
+        self.conn.commit()
+
     def set_thumbnail(self, photo_id: str, path: Path) -> None:
         self.conn.execute("UPDATE photos SET thumbnail_path=?, updated_at=? WHERE photo_id=?", (str(path), now_iso(), photo_id)); self.conn.commit()
 

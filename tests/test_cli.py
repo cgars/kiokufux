@@ -282,3 +282,129 @@ def test_parser_accepts_review_source_options(tmp_path):
     assert parser.parse_args(["vocab-apply", str(tmp_path), "--source", "vlm-fake"]).source == "vlm-fake"
     assert parser.parse_args(["accept-tag", str(tmp_path), "abcdef1", "garden", "--source", "vlm-fake"]).source == "vlm-fake"
     assert parser.parse_args(["reject-tag", str(tmp_path), "abcdef1", "garden", "--source", "vlm-fake"]).source == "vlm-fake"
+
+
+
+def test_parser_accepts_rotate_command(tmp_path):
+    from kiokufux.cli import _build_parser
+
+    args = _build_parser().parse_args(["rotate", str(tmp_path), "abcdef1", "--degrees", "90"])
+    auto_args = _build_parser().parse_args(["rotate", str(tmp_path), "abcdef1", "--auto"])
+
+    assert args.cmd == "rotate"
+    assert args.photo_id == "abcdef1"
+    assert args.degrees == 90
+    assert args.auto is False
+    assert auto_args.auto is True
+    assert auto_args.degrees is None
+    assert args.no_backup is False
+
+
+def test_rotate_command_rotates_image_and_invalidates_catalog(tmp_path):
+    from kiokufux.catalog import Catalog
+    from kiokufux.cli import main
+    from kiokufux.hashing import file_sha256, photo_id_for_hash
+    from kiokufux.metadata import extract_metadata
+    from kiokufux.models import Embedding, Photo
+    from PIL import Image
+
+    image_path = tmp_path / "wide.jpg"
+    Image.new("RGB", (8, 4), "red").save(image_path)
+    file_hash = file_sha256(image_path)
+    photo_id = photo_id_for_hash(file_hash)
+    catalog = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite")
+    catalog.init_schema()
+    catalog.upsert_photo(Photo(photo_id=photo_id, source_path=image_path, relative_path="wide.jpg", file_hash=file_hash, **extract_metadata(image_path)))
+    catalog.set_thumbnail(photo_id, tmp_path / ".kiokufux" / "thumbnails" / f"{photo_id}.jpg")
+    catalog.upsert_embedding(Embedding(photo_id, "model", "version", 2, "embeddings/x.npy", "now"))
+    catalog.close()
+
+    assert main(["rotate", str(tmp_path), photo_id[:7], "--degrees", "90"]) == 0
+
+    with Image.open(image_path) as rotated:
+        assert rotated.size == (4, 8)
+    assert (tmp_path / "wide.jpg.bak").exists()
+
+    catalog = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite")
+    catalog.init_schema()
+    photo = catalog.get_photo(photo_id)
+    assert photo is not None
+    assert photo.width == 4
+    assert photo.height == 8
+    assert photo.thumbnail_path is None
+    assert photo.embedding_status == "pending"
+    assert catalog.list_embeddings("model", "version") == []
+    catalog.close()
+
+
+def test_auto_rotate_command_uses_non_exif_textline_detection(tmp_path):
+    from kiokufux.catalog import Catalog
+    from kiokufux.cli import main
+    from kiokufux.hashing import file_sha256, photo_id_for_hash
+    from kiokufux.metadata import extract_metadata
+    from kiokufux.models import Photo
+    from PIL import Image, ImageDraw
+
+    upright = Image.new("RGB", (120, 80), "white")
+    draw = ImageDraw.Draw(upright)
+    for y in (20, 32, 44, 56):
+        draw.rectangle((16, y, 104, y + 3), fill="black")
+    image_path = tmp_path / "text.jpg"
+    upright.rotate(90, expand=True).save(image_path)
+    file_hash = file_sha256(image_path)
+    photo_id = photo_id_for_hash(file_hash)
+    catalog = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite")
+    catalog.init_schema()
+    catalog.upsert_photo(Photo(photo_id=photo_id, source_path=image_path, relative_path="text.jpg", file_hash=file_hash, **extract_metadata(image_path)))
+    catalog.close()
+
+    assert main(["rotate", str(tmp_path), photo_id[:7], "--auto", "--no-backup"]) == 0
+
+    with Image.open(image_path) as rotated:
+        assert rotated.size == (120, 80)
+
+
+def test_auto_rotate_command_can_use_existing_vlm_description(tmp_path, capsys):
+    from kiokufux.catalog import Catalog
+    from kiokufux.cli import main
+    from kiokufux.hashing import file_sha256, photo_id_for_hash
+    from kiokufux.metadata import extract_metadata
+    from kiokufux.models import Photo
+    from kiokufux.vlm import ImageAnalysis
+    from PIL import Image
+
+    image_path = tmp_path / "sideways.jpg"
+    Image.new("RGB", (6, 10), "blue").save(image_path)
+    file_hash = file_sha256(image_path)
+    photo_id = photo_id_for_hash(file_hash)
+    catalog = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite")
+    catalog.init_schema()
+    catalog.upsert_photo(Photo(photo_id=photo_id, source_path=image_path, relative_path="sideways.jpg", file_hash=file_hash, **extract_metadata(image_path)))
+    catalog.upsert_image_analysis(ImageAnalysis(
+        photo_id=photo_id,
+        source="vlm-test",
+        model_name="fake",
+        model_version="test",
+        caption="A sideways photo.",
+        description="The image appears rotated counterclockwise and should be turned upright.",
+    ))
+    catalog.close()
+
+    assert main(["rotate", str(tmp_path), photo_id[:7], "--auto", "--no-backup"]) == 0
+
+    output = capsys.readouterr().out
+    assert "source=vlm-description" in output
+    with Image.open(image_path) as rotated:
+        assert rotated.size == (10, 6)
+
+
+def test_vlm_description_rotation_detection_maps_image_orientation_to_correction():
+    from kiokufux.rotation import detect_clockwise_rotation_from_description
+
+    left = detect_clockwise_rotation_from_description("The image appears rotated counterclockwise.")
+    right = detect_clockwise_rotation_from_description("The image appears rotated clockwise.")
+    upside_down = detect_clockwise_rotation_from_description("The photo is upside down.")
+
+    assert left.degrees == 90
+    assert right.degrees == 270
+    assert upside_down.degrees == 180

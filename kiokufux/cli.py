@@ -10,6 +10,9 @@ from .catalog import Catalog
 from .config import KiokuFuxConfig, catalog_path, ensure_workspace, load_config, write_default_config
 from .embeddings import backend_from_options, generate_embeddings
 from .models import Photo, SearchResult, TagProposal, TagProposalSummary, TagVocabularyEntry
+from .hashing import file_sha256
+from .metadata import extract_metadata
+from .rotation import VALID_ROTATION_DEGREES, detect_clockwise_rotation, rotate_image
 from .scanner import scan as scan_folder
 from .search import search as run_search
 from .sidecar import export_sidecars
@@ -177,6 +180,13 @@ def _build_parser() -> argparse.ArgumentParser:
     for name in ["init", "scan", "thumbnails", "export-sidecars"]:
         sp = sub.add_parser(name)
         sp.add_argument("path", type=Path)
+    rotate = sub.add_parser("rotate")
+    rotate.add_argument("path", type=Path)
+    rotate.add_argument("photo_id", help="Full photo ID or unique prefix of at least 7 characters")
+    rotation_mode = rotate.add_mutually_exclusive_group(required=True)
+    rotation_mode.add_argument("--degrees", type=int, choices=sorted(VALID_ROTATION_DEGREES), help="Clockwise rotation in degrees")
+    rotation_mode.add_argument("--auto", action="store_true", help="Detect the clockwise rotation from EXIF or conservative image-content heuristics")
+    rotate.add_argument("--no-backup", action="store_true", help="Do not write a same-folder .bak copy before rotating")
     tag = sub.add_parser("tag")
     tag.add_argument("path", type=Path)
     tag.add_argument("photo_id")
@@ -320,6 +330,36 @@ def main(argv: list[str] | None = None) -> int:
             exported = export_sidecars(cat)
             logger.info("Exported %s sidecars", exported)
             print(f"Exported {exported} sidecars")
+        elif args.cmd == "rotate":
+            try:
+                photo_id = cat.resolve_photo_id(args.photo_id)
+            except ValueError as exc:
+                parser.error(str(exc))
+            photo = cat.get_photo(photo_id)
+            if photo is None:
+                parser.error(f"No photo found for ID: {photo_id}")
+            degrees = args.degrees
+            if args.auto:
+                analysis = cat.get_image_analysis(photo_id)
+                description_text = None
+                if analysis is not None:
+                    description_text = " ".join(
+                        part for part in [analysis.caption, analysis.description, analysis.scene, analysis.activity, *analysis.warnings] if part
+                    )
+                detection = detect_clockwise_rotation(photo.source_path, description_text=description_text)
+                print(f"Auto-rotation detection: source={detection.source} confidence={detection.confidence:.2f} reason={detection.reason}")
+                if detection.degrees is None:
+                    logger.info("No confident auto-rotation for %s", photo.source_path)
+                    print("No image changes made. Use --degrees 90|180|270 if you want to rotate manually.")
+                    return 0
+                degrees = detection.degrees
+            result = rotate_image(photo.source_path, degrees, create_backup=not args.no_backup)
+            metadata = extract_metadata(photo.source_path)
+            cat.mark_photo_edited(photo_id, file_sha256(photo.source_path), metadata)
+            logger.info("Rotated %s clockwise by %s degrees", photo.source_path, degrees)
+            backup = f"; backup: {result.backup_path}" if result.backup_path else ""
+            print(f"Rotated {photo.relative_path} clockwise by {degrees} degrees{backup}")
+            print("Thumbnails and embeddings were invalidated; rerun thumbnails and embed when ready.")
         elif args.cmd == "tag":
             for tag in args.tags:
                 cat.add_tag(args.photo_id, tag)

@@ -37,6 +37,8 @@ If OpenCLIP is unavailable, KiokuFux falls back to a dependency-light local embe
 kiokufux -v init PATH
 kiokufux scan PATH
 kiokufux thumbnails PATH
+kiokufux rotate PATH PHOTO_ID_OR_7_CHAR_PREFIX --degrees 90
+kiokufux rotate PATH PHOTO_ID_OR_7_CHAR_PREFIX --auto
 kiokufux embed PATH
 kiokufux search PATH "query text"
 kiokufux search PATH "query text" --summary
@@ -69,6 +71,7 @@ kiokufux export-sidecars PATH
 kiokufux init ./photos
 kiokufux scan ./photos
 kiokufux thumbnails ./photos
+kiokufux rotate ./photos PHOTO_ID_FROM_SEARCH --degrees 90
 kiokufux embed ./photos
 kiokufux search ./photos "red car in front of a house"
 kiokufux search ./photos "red car in front of a house" --summary
@@ -178,6 +181,14 @@ For a remote Ollama machine, pass the server root URL, not the generate endpoint
 KiokuFux also supports a local controlled vocabulary workflow. `kiokufux vocab-propose ./photos` promotes recurring pending tag proposals into vocabulary candidates. Review candidates with `kiokufux vocab ./photos`, accept canonical tags with categories/scopes via `kiokufux vocab-accept`, reject unwanted tags with `kiokufux vocab-reject`, and merge synonyms with `kiokufux vocab-merge ALIAS CANONICAL_TAG`. `kiokufux vocab-apply ./photos` then applies accepted vocabulary tags to matching pending proposals, using aliases to store canonical tags and using rejected vocabulary entries as persistent reject memory. This implements the curated-vocabulary part of the workflow while remaining local-first.
 
 Running `kiokufux tag-review ./photos` without a photo ID prints a grouped list of all images that have proposed tags, showing each image filename and the first seven characters of its photo ID; adding a photo ID limits review output to that image. To accept every pending proposal, use `kiokufux accept-tag ./photos --all`; add either the full photo ID or its first seven characters before `--all` to accept all pending proposals for only that image. Single-proposal accepts also allow either the full photo ID or its first seven characters. Accepted AI proposals are stored as `source=auto` tags and exported under `semantic.auto_tags`; pending/rejected proposals are exported under `review.tag_proposals` for review. No image data is sent to online services for MVP1 auto-tagging, though OpenCLIP may download model weights if selected and uncached.
+
+## Image rotation
+
+`kiokufux rotate PATH PHOTO_ID_OR_7_CHAR_PREFIX --degrees 90|180|270` rotates an indexed image clockwise in place. Use `--auto` instead of `--degrees` to ask KiokuFux to choose a rotation from EXIF orientation first, then from any existing `vlm-analyze` caption/description that clearly mentions orientation, and finally from a conservative local image-content heuristic that looks for document/text-line structure when EXIF is absent. If auto-detection is not confident, no image is changed and KiokuFux asks you to choose `--degrees` manually.
+
+By default rotation writes a same-folder `.bak` copy before changing the original; pass `--no-backup` only if you already have external backups. After rotation, KiokuFux refreshes the catalog metadata, clears the stale thumbnail path, deletes stale embeddings and VLM analyses, and marks the image for fresh thumbnail and embedding generation. Rerun `kiokufux thumbnails PATH` and `kiokufux embed PATH` when ready.
+
+This is useful for fixing incorrectly oriented scans, but it is intentionally explicit because it edits the source image file. Automatic non-EXIF detection is intentionally conservative: existing VLM descriptions can help when they explicitly mention that an image is rotated, and the local heuristic works best for document-like/text-heavy images; arbitrary photos may still need manual review. For archival collections, prefer keeping backups or representing rotation in sidecars until you are sure destructive edits fit your workflow.
 
 ## Sidecars
 

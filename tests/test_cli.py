@@ -290,6 +290,7 @@ def test_parser_accepts_rotate_command(tmp_path):
 
     args = _build_parser().parse_args(["rotate", str(tmp_path), "abcdef1", "--degrees", "90"])
     auto_args = _build_parser().parse_args(["rotate", str(tmp_path), "abcdef1", "--auto"])
+    batch_auto_args = _build_parser().parse_args(["rotate", str(tmp_path), "--auto"])
 
     assert args.cmd == "rotate"
     assert args.photo_id == "abcdef1"
@@ -297,6 +298,8 @@ def test_parser_accepts_rotate_command(tmp_path):
     assert args.auto is False
     assert auto_args.auto is True
     assert auto_args.degrees is None
+    assert batch_auto_args.photo_id is None
+    assert batch_auto_args.auto is True
     assert args.no_backup is False
 
 
@@ -408,3 +411,50 @@ def test_vlm_description_rotation_detection_maps_image_orientation_to_correction
     assert left.degrees == 90
     assert right.degrees == 270
     assert upside_down.degrees == 180
+
+
+def test_batch_auto_rotate_processes_all_indexed_images(tmp_path, capsys):
+    from kiokufux.catalog import Catalog
+    from kiokufux.cli import main
+    from kiokufux.hashing import file_sha256, photo_id_for_hash
+    from kiokufux.metadata import extract_metadata
+    from kiokufux.models import Photo
+    from kiokufux.vlm import ImageAnalysis
+    from PIL import Image
+
+    catalog = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite")
+    catalog.init_schema()
+    for name, description, color in [
+        ("first.jpg", "The image appears rotated counterclockwise.", "green"),
+        ("nested/second.jpg", "The image appears rotated clockwise.", "purple"),
+    ]:
+        image_path = tmp_path / name
+        image_path.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (6, 10), color).save(image_path)
+        file_hash = file_sha256(image_path)
+        photo_id = photo_id_for_hash(file_hash)
+        catalog.upsert_photo(Photo(
+            photo_id=photo_id,
+            source_path=image_path,
+            relative_path=name,
+            file_hash=file_hash,
+            **extract_metadata(image_path),
+        ))
+        catalog.upsert_image_analysis(ImageAnalysis(
+            photo_id=photo_id,
+            source="vlm-test",
+            model_name="fake",
+            model_version="test",
+            description=description,
+        ))
+    catalog.close()
+
+    assert main(["rotate", str(tmp_path), "--auto", "--no-backup"]) == 0
+
+    output = capsys.readouterr().out
+    assert "first.jpg: source=vlm-description" in output
+    assert "nested/second.jpg: source=vlm-description" in output
+    assert "Auto-rotation complete: 2 rotated, 0 skipped" in output
+    with Image.open(tmp_path / "first.jpg") as first, Image.open(tmp_path / "nested/second.jpg") as second:
+        assert first.size == (10, 6)
+        assert second.size == (10, 6)

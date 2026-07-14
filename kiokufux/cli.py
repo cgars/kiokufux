@@ -182,7 +182,7 @@ def _build_parser() -> argparse.ArgumentParser:
         sp.add_argument("path", type=Path)
     rotate = sub.add_parser("rotate")
     rotate.add_argument("path", type=Path)
-    rotate.add_argument("photo_id", help="Full photo ID or unique prefix of at least 7 characters")
+    rotate.add_argument("photo_id", nargs="?", help="Full photo ID or unique prefix of at least 7 characters; omit with --auto to process all indexed images")
     rotation_mode = rotate.add_mutually_exclusive_group(required=True)
     rotation_mode.add_argument("--degrees", type=int, choices=sorted(VALID_ROTATION_DEGREES), help="Clockwise rotation in degrees")
     rotation_mode.add_argument("--auto", action="store_true", help="Detect the clockwise rotation from EXIF or conservative image-content heuristics")
@@ -272,6 +272,26 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _analysis_description_text(analysis: object | None) -> str | None:
+    if analysis is None:
+        return None
+    parts = [
+        getattr(analysis, "caption", None),
+        getattr(analysis, "description", None),
+        getattr(analysis, "scene", None),
+        getattr(analysis, "activity", None),
+        *getattr(analysis, "warnings", []),
+    ]
+    return " ".join(part for part in parts if part) or None
+
+
+def _rotate_photo(cat: Catalog, photo: Photo, degrees: int, create_backup: bool, logger: logging.Logger) -> str | None:
+    result = rotate_image(photo.source_path, degrees, create_backup=create_backup)
+    metadata = extract_metadata(photo.source_path)
+    cat.mark_photo_edited(photo.photo_id, file_sha256(photo.source_path), metadata)
+    logger.info("Rotated %s clockwise by %s degrees", photo.source_path, degrees)
+    return str(result.backup_path) if result.backup_path else None
+
 def main(argv: list[str] | None = None) -> int:
     raw_argv = sys.argv[1:] if argv is None else argv
     cleaned_argv, extracted_verbose = _extract_verbose_args(raw_argv)
@@ -331,6 +351,31 @@ def main(argv: list[str] | None = None) -> int:
             logger.info("Exported %s sidecars", exported)
             print(f"Exported {exported} sidecars")
         elif args.cmd == "rotate":
+            if args.photo_id is None:
+                if not args.auto:
+                    parser.error("rotate requires PHOTO_ID unless --auto is used for all indexed images")
+                rotated = skipped = 0
+                for photo in cat.list_photos():
+                    detection = detect_clockwise_rotation(
+                        photo.source_path,
+                        description_text=_analysis_description_text(cat.get_image_analysis(photo.photo_id)),
+                    )
+                    print(
+                        f"{photo.relative_path}: source={detection.source} "
+                        f"confidence={detection.confidence:.2f} reason={detection.reason}"
+                    )
+                    if detection.degrees is None:
+                        skipped += 1
+                        continue
+                    backup_path = _rotate_photo(cat, photo, detection.degrees, create_backup=not args.no_backup, logger=logger)
+                    backup = f"; backup: {backup_path}" if backup_path else ""
+                    print(f"Rotated {photo.relative_path} clockwise by {detection.degrees} degrees{backup}")
+                    rotated += 1
+                print(f"Auto-rotation complete: {rotated} rotated, {skipped} skipped")
+                if rotated:
+                    print("Thumbnails and embeddings were invalidated for rotated images; rerun thumbnails and embed when ready.")
+                return 0
+
             try:
                 photo_id = cat.resolve_photo_id(args.photo_id)
             except ValueError as exc:
@@ -340,24 +385,18 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error(f"No photo found for ID: {photo_id}")
             degrees = args.degrees
             if args.auto:
-                analysis = cat.get_image_analysis(photo_id)
-                description_text = None
-                if analysis is not None:
-                    description_text = " ".join(
-                        part for part in [analysis.caption, analysis.description, analysis.scene, analysis.activity, *analysis.warnings] if part
-                    )
-                detection = detect_clockwise_rotation(photo.source_path, description_text=description_text)
+                detection = detect_clockwise_rotation(
+                    photo.source_path,
+                    description_text=_analysis_description_text(cat.get_image_analysis(photo_id)),
+                )
                 print(f"Auto-rotation detection: source={detection.source} confidence={detection.confidence:.2f} reason={detection.reason}")
                 if detection.degrees is None:
                     logger.info("No confident auto-rotation for %s", photo.source_path)
                     print("No image changes made. Use --degrees 90|180|270 if you want to rotate manually.")
                     return 0
                 degrees = detection.degrees
-            result = rotate_image(photo.source_path, degrees, create_backup=not args.no_backup)
-            metadata = extract_metadata(photo.source_path)
-            cat.mark_photo_edited(photo_id, file_sha256(photo.source_path), metadata)
-            logger.info("Rotated %s clockwise by %s degrees", photo.source_path, degrees)
-            backup = f"; backup: {result.backup_path}" if result.backup_path else ""
+            backup_path = _rotate_photo(cat, photo, degrees, create_backup=not args.no_backup, logger=logger)
+            backup = f"; backup: {backup_path}" if backup_path else ""
             print(f"Rotated {photo.relative_path} clockwise by {degrees} degrees{backup}")
             print("Thumbnails and embeddings were invalidated; rerun thumbnails and embed when ready.")
         elif args.cmd == "tag":

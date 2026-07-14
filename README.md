@@ -38,7 +38,7 @@ kiokufux -v init PATH
 kiokufux scan PATH
 kiokufux thumbnails PATH
 kiokufux rotate PATH PHOTO_ID_OR_7_CHAR_PREFIX --degrees 90
-kiokufux rotate PATH PHOTO_ID_OR_7_CHAR_PREFIX --auto
+kiokufux rotate PATH --auto
 kiokufux embed PATH
 kiokufux search PATH "query text"
 kiokufux search PATH "query text" --summary
@@ -184,7 +184,7 @@ Running `kiokufux tag-review ./photos` without a photo ID prints a grouped list 
 
 ## Image rotation
 
-`kiokufux rotate PATH PHOTO_ID_OR_7_CHAR_PREFIX --degrees 90|180|270` rotates an indexed image clockwise in place. Use `--auto` instead of `--degrees` to ask KiokuFux to choose a rotation from EXIF orientation first, then from any existing `vlm-analyze` caption/description that clearly mentions orientation, and finally from a conservative local image-content heuristic that looks for document/text-line structure when EXIF is absent. If auto-detection is not confident, no image is changed and KiokuFux asks you to choose `--degrees` manually.
+`kiokufux rotate PATH PHOTO_ID_OR_7_CHAR_PREFIX --degrees 90|180|270` rotates an indexed image clockwise in place. Use `kiokufux rotate PATH --auto` to recursively process all indexed images under `PATH`, or `--auto` with a photo ID to check one image. Auto mode asks KiokuFux to choose a rotation from EXIF orientation first, then from any existing `vlm-analyze` caption/description that clearly mentions orientation, and finally from a conservative local image-content heuristic that looks for document/text-line structure when EXIF is absent. If auto-detection is not confident, no image is changed and KiokuFux asks you to choose `--degrees` manually.
 
 By default rotation writes a same-folder `.bak` copy before changing the original; pass `--no-backup` only if you already have external backups. After rotation, KiokuFux refreshes the catalog metadata, clears the stale thumbnail path, deletes stale embeddings and VLM analyses, and marks the image for fresh thumbnail and embedding generation. Rerun `kiokufux thumbnails PATH` and `kiokufux embed PATH` when ready.
 

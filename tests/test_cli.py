@@ -726,5 +726,7 @@ def test_prompts_command_prints_rotation_prompts_without_workspace(capsys):
     assert "[rotation.direct_action]" in output
     assert "Choose exactly one clockwise rotation" in output
     assert "[rotation.candidate_comparison]" in output
-    assert "Candidate A applies 0 degrees" in output
+    assert "Candidate A = original pixels" in output
+    assert "Do not judge whether the contact sheet as a whole is upright" in output
+    assert '{"selected_candidate": "A", "rotation": 0}' in output
     assert "[vlm-analysis.default]" not in output

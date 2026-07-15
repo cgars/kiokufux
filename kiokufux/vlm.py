@@ -65,7 +65,16 @@ class FakeVisionLanguageBackend(VisionLanguageBackend):
         self.prompt = prompt or IMAGE_ANALYSIS_PROMPT
 
     def analyze_image(self, image_path: Path, accepted_vocabulary: list[str] | None = None) -> dict[str, Any]:
-        if "\"rotation\"" in self.prompt or "selected_candidate" in self.prompt or "action_clockwise_degrees" in self.prompt or "clockwise_degrees" in self.prompt:
+        if "selected_candidate" in self.prompt:
+            stem = image_path.stem.lower()
+            if "counterclockwise" in stem or "anticlockwise" in stem or "rotated-left" in stem:
+                return {"selected_candidate": "B", "rotation": 90}
+            if "clockwise" in stem or "rotated-right" in stem:
+                return {"selected_candidate": "D", "rotation": 270}
+            if "upside-down" in stem or "upsidedown" in stem:
+                return {"selected_candidate": "C", "rotation": 180}
+            return {"selected_candidate": "A", "rotation": 0}
+        if "\"rotation\"" in self.prompt or "action_clockwise_degrees" in self.prompt or "clockwise_degrees" in self.prompt:
             stem = image_path.stem.lower()
             if "counterclockwise" in stem or "anticlockwise" in stem or "rotated-left" in stem:
                 return {"rotation": 90}

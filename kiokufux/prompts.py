@@ -24,23 +24,23 @@ Return JSON only:
 
 {"rotation": 0}"""
 
-ROTATION_VLM_COMPARE_PROMPT = """You are shown one contact sheet with four labeled versions of the same image. Candidate A applies 0 degrees clockwise to the supplied pixels, B applies 90 degrees clockwise, C applies 180 degrees clockwise, and D applies 270 degrees clockwise.
+ROTATION_VLM_COMPARE_PROMPT = """You are shown one contact sheet containing four labeled candidate displays of the same original image.
 
-Choose exactly one clockwise rotation to apply to the original supplied pixels:
+Candidate A = original pixels, 0 degrees clockwise applied.
+Candidate B = original pixels rotated 90 degrees clockwise.
+Candidate C = original pixels rotated 180 degrees clockwise.
+Candidate D = original pixels rotated 270 degrees clockwise.
 
-0
-90
-180
-270
-UNCERTAIN
-
-Judge which candidate makes people, faces, text, buildings, furniture, the horizon, gravity, and other scene elements naturally upright.
-
+Choose the single candidate that already looks physically upright.
+Judge people, faces, text, buildings, furniture, the horizon, gravity, and other scene elements.
+Do not judge whether the contact sheet as a whole is upright.
 Do not describe the image.
-Do not mentally compensate for the rotation.
-Return JSON only:
+Do not mentally compensate for rotation.
+If no candidate is clearly upright, choose UNCERTAIN.
 
-{"rotation": 0}"""
+Return JSON only, using the candidate label and its clockwise rotation from the list above:
+
+{"selected_candidate": "A", "rotation": 0}"""
 
 
 @dataclass(frozen=True)

@@ -511,3 +511,27 @@ def test_scan_prints_progress_to_stderr(tmp_path, capsys):
     assert "Scanned 1 images" in captured.err
     assert "current=photo.jpg" in captured.err
     assert "Scan complete: 1 indexed/updated, 0 errors" in captured.out
+
+
+
+def test_scan_progress_still_marks_deleted_files_missing(tmp_path):
+    from kiokufux.catalog import Catalog
+    from kiokufux.cli import main
+    from kiokufux.config import catalog_path
+    from PIL import Image
+
+    image_path = tmp_path / "deleted.jpg"
+    Image.new("RGB", (4, 4), "blue").save(image_path)
+
+    assert main(["scan", str(tmp_path)]) == 0
+    image_path.unlink()
+    assert main(["scan", str(tmp_path)]) == 0
+
+    catalog = Catalog(catalog_path(tmp_path))
+    catalog.init_schema()
+    photos = catalog.list_photos(include_missing=True)
+    catalog.close()
+
+    assert len(photos) == 1
+    assert photos[0].relative_path == "deleted.jpg"
+    assert photos[0].missing is True

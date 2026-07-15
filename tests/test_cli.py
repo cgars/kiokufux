@@ -655,6 +655,16 @@ def test_direct_vlm_rotation_response_distinguishes_action_from_appearance():
     assert uncertain.degrees is None
 
 
+
+def test_vlm_rotation_response_does_not_turn_negated_reason_into_180():
+    from kiokufux.rotation import detect_clockwise_rotation_from_description, detect_clockwise_rotation_from_vlm_response
+
+    response = detect_clockwise_rotation_from_vlm_response({"reason": "The image is not sideways or upside down."})
+    description = detect_clockwise_rotation_from_description("The image is not upside down and appears upright.")
+
+    assert response.degrees is None
+    assert description.degrees is None
+
 def test_vlm_verify_rechecks_once_without_second_rotation(tmp_path, capsys):
     from kiokufux.catalog import Catalog
     from kiokufux.cli import main

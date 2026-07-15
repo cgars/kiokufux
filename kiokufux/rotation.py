@@ -46,6 +46,23 @@ def detect_clockwise_rotation_from_description(text: str | None, source: str = "
     if not text:
         return RotationDetection(None, 0.0, source, "no VLM description available")
     normalized = _normalized_orientation_text(text)
+    upright_markers = (
+        "already upright",
+        "appears upright",
+        "looks upright",
+        "right side up",
+        "correctly oriented",
+        "properly oriented",
+        "no rotation needed",
+        "no corrective rotation",
+        "does not need rotation",
+        "doesn't need rotation",
+        "not rotated",
+        "not sideways",
+        "not upside down",
+    )
+    if any(marker in normalized for marker in upright_markers):
+        return RotationDetection(None, 0.70, source, "VLM text says the image is already upright or does not need rotation")
     if not any(marker in normalized for marker in ("rotated", "rotation", "orientation", "sideways", "upside down", "on its side", "turned")):
         return RotationDetection(None, 0.0, source, "VLM description does not mention image orientation")
 
@@ -128,7 +145,7 @@ def detect_clockwise_rotation_from_vlm_response(raw: object, source: str = "fres
     if action_detection is not None and action_detection.degrees is not None:
         return action_detection
 
-    appearance_text = " ".join(str(rotation.get(key, "")) for key in ("orientation", "direction", "description", "reason"))
+    appearance_text = " ".join(str(rotation.get(key, "")) for key in ("orientation", "direction", "description"))
     text_detection = detect_clockwise_rotation_from_description(appearance_text, source=source)
     if text_detection.degrees is not None:
         return text_detection

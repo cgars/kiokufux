@@ -42,12 +42,12 @@ def _normalized_orientation_text(text: str) -> str:
     return " ".join(text.lower().replace("-", " ").split())
 
 
-def detect_clockwise_rotation_from_description(text: str | None) -> RotationDetection:
+def detect_clockwise_rotation_from_description(text: str | None, source: str = "vlm-description") -> RotationDetection:
     if not text:
-        return RotationDetection(None, 0.0, "vlm-description", "no VLM description available")
+        return RotationDetection(None, 0.0, source, "no VLM description available")
     normalized = _normalized_orientation_text(text)
     if not any(marker in normalized for marker in ("rotated", "rotation", "orientation", "sideways", "upside down", "on its side", "turned")):
-        return RotationDetection(None, 0.0, "vlm-description", "VLM description does not mention image orientation")
+        return RotationDetection(None, 0.0, source, "VLM description does not mention image orientation")
 
     explicit = re.search(r"(?:rotate|rotated|rotation|turn|turned)\D{0,24}(90|180|270)\D{0,24}(clockwise|counterclockwise|anti clockwise|anticlockwise|left|right)", normalized)
     if explicit:
@@ -56,15 +56,15 @@ def detect_clockwise_rotation_from_description(text: str | None) -> RotationDete
         if direction in {"clockwise", "right"}:
             degrees = (360 - degrees) % 360
         if degrees in VALID_ROTATION_DEGREES:
-            return RotationDetection(degrees, 0.86, "vlm-description", "VLM description explicitly mentions the image rotation")
+            return RotationDetection(degrees, 0.86, source, "VLM description explicitly mentions the image rotation")
 
     if "upside down" in normalized or "180" in normalized:
-        return RotationDetection(180, 0.82, "vlm-description", "VLM description says the image is upside down")
+        return RotationDetection(180, 0.82, source, "VLM description says the image is upside down")
     if "counterclockwise" in normalized or "anti clockwise" in normalized or "anticlockwise" in normalized or "rotated left" in normalized or "turned left" in normalized:
-        return RotationDetection(90, 0.78, "vlm-description", "VLM description says the image is rotated counterclockwise/left")
+        return RotationDetection(90, 0.78, source, "VLM description says the image is rotated counterclockwise/left")
     if "clockwise" in normalized or "rotated right" in normalized or "turned right" in normalized:
-        return RotationDetection(270, 0.78, "vlm-description", "VLM description says the image is rotated clockwise/right")
-    return RotationDetection(None, 0.20, "vlm-description", "VLM description mentions orientation but not a usable direction")
+        return RotationDetection(270, 0.78, source, "VLM description says the image is rotated clockwise/right")
+    return RotationDetection(None, 0.20, source, "VLM description mentions orientation but not a usable direction")
 
 def _exif_clockwise_rotation(img: Image.Image) -> int | None:
     orientation = img.getexif().get(274)
@@ -97,7 +97,7 @@ def detect_clockwise_rotation(path: Path, description_text: str | None = None) -
         if exif_degrees is not None:
             return RotationDetection(exif_degrees, 1.0, "exif", f"EXIF orientation requests {exif_degrees}° clockwise rotation")
 
-        description_detection = detect_clockwise_rotation_from_description(description_text)
+        description_detection = detect_clockwise_rotation_from_description(description_text, source="stored-vlm-description")
         if description_detection.degrees is not None:
             return description_detection
 

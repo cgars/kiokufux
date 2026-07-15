@@ -12,7 +12,7 @@ from .embeddings import backend_from_options, generate_embeddings
 from .models import Photo, SearchResult, TagProposal, TagProposalSummary, TagVocabularyEntry
 from .hashing import file_sha256
 from .metadata import extract_metadata
-from .rotation import VALID_ROTATION_DEGREES, detect_clockwise_rotation, detect_clockwise_rotation_from_description, rotate_image
+from .rotation import VALID_ROTATION_DEGREES, RotationDetection, detect_clockwise_rotation, detect_clockwise_rotation_from_description, rotate_image
 from .scanner import scan as scan_folder
 from .search import search as run_search
 from .sidecar import export_sidecars
@@ -300,6 +300,11 @@ def _rotate_photo(cat: Catalog, photo: Photo, degrees: int, create_backup: bool,
     return str(result.backup_path) if result.backup_path else None
 
 
+def _format_rotation_decision(prefix: str, detection: RotationDetection) -> str:
+    action = f"rotate {detection.degrees}° clockwise" if detection.degrees is not None else "skip"
+    return f"{prefix}: decision={action}; basis={detection.source}; confidence={detection.confidence:.2f}; reason={detection.reason}"
+
+
 def _rotation_vlm_backend(args: argparse.Namespace):
     return backend_from_name(
         args.vlm_backend,
@@ -328,7 +333,7 @@ def _run_rotation_vlm_analysis(cat: Catalog, photo: Photo, args: argparse.Namesp
 def _detect_rotation_for_photo(cat: Catalog, photo: Photo, args: argparse.Namespace, logger: logging.Logger):
     if args.vlm_only:
         analysis = _run_rotation_vlm_analysis(cat, photo, args, logger)
-        return detect_clockwise_rotation_from_description(_analysis_description_text(analysis))
+        return detect_clockwise_rotation_from_description(_analysis_description_text(analysis), source="fresh-vlm-only")
 
     detection = detect_clockwise_rotation(
         photo.source_path,
@@ -338,7 +343,7 @@ def _detect_rotation_for_photo(cat: Catalog, photo: Photo, args: argparse.Namesp
         return detection
 
     analysis = _run_rotation_vlm_analysis(cat, photo, args, logger)
-    vlm_detection = detect_clockwise_rotation_from_description(_analysis_description_text(analysis))
+    vlm_detection = detect_clockwise_rotation_from_description(_analysis_description_text(analysis), source="fresh-vlm-fallback")
     if vlm_detection.degrees is not None:
         return vlm_detection
     return detection
@@ -420,10 +425,7 @@ def main(argv: list[str] | None = None) -> int:
                 rotated = skipped = 0
                 for photo in cat.list_photos():
                     detection = _detect_rotation_for_photo(cat, photo, args, logger)
-                    print(
-                        f"{photo.relative_path}: source={detection.source} "
-                        f"confidence={detection.confidence:.2f} reason={detection.reason}"
-                    )
+                    print(_format_rotation_decision(photo.relative_path, detection))
                     if detection.degrees is None:
                         skipped += 1
                         continue
@@ -446,7 +448,7 @@ def main(argv: list[str] | None = None) -> int:
             degrees = args.degrees
             if args.auto:
                 detection = _detect_rotation_for_photo(cat, photo, args, logger)
-                print(f"Auto-rotation detection: source={detection.source} confidence={detection.confidence:.2f} reason={detection.reason}")
+                print(_format_rotation_decision("Auto-rotation", detection))
                 if detection.degrees is None:
                     logger.info("No confident auto-rotation for %s", photo.source_path)
                     print("No image changes made. Use --degrees 90|180|270 if you want to rotate manually.")

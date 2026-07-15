@@ -635,3 +635,15 @@ def test_vlm_only_ignores_existing_vlm_description(tmp_path, capsys):
     assert "decision=skip" in output
     with Image.open(image_path) as rotated:
         assert rotated.size == (6, 10)
+
+
+def test_direct_vlm_rotation_response_distinguishes_action_from_appearance():
+    from kiokufux.rotation import detect_clockwise_rotation_from_vlm_response
+
+    action = detect_clockwise_rotation_from_vlm_response({"needs_rotation": True, "action": "rotate 90 degrees counterclockwise"})
+    appearance = detect_clockwise_rotation_from_vlm_response({"needs_rotation": True, "orientation": "the image appears rotated 90 degrees clockwise"})
+    explicit_action = detect_clockwise_rotation_from_vlm_response({"needs_rotation": True, "action_clockwise_degrees": 270})
+
+    assert action.degrees == 270
+    assert appearance.degrees == 270
+    assert explicit_action.degrees == 270

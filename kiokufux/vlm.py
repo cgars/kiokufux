@@ -65,15 +65,15 @@ class FakeVisionLanguageBackend(VisionLanguageBackend):
         self.prompt = prompt or IMAGE_ANALYSIS_PROMPT
 
     def analyze_image(self, image_path: Path, accepted_vocabulary: list[str] | None = None) -> dict[str, Any]:
-        if "clockwise_degrees" in self.prompt:
+        if "action_clockwise_degrees" in self.prompt or "clockwise_degrees" in self.prompt:
             stem = image_path.stem.lower()
             if "counterclockwise" in stem or "anticlockwise" in stem or "rotated-left" in stem:
-                return {"needs_rotation": True, "clockwise_degrees": 90, "confidence": 0.78, "reason": "filename indicates counterclockwise rotation in fake VLM"}
+                return {"needs_rotation": True, "action_clockwise_degrees": 90, "confidence": 0.78, "reason": "filename indicates counterclockwise rotation in fake VLM"}
             if "clockwise" in stem or "rotated-right" in stem:
-                return {"needs_rotation": True, "clockwise_degrees": 270, "confidence": 0.78, "reason": "filename indicates clockwise rotation in fake VLM"}
+                return {"needs_rotation": True, "action_clockwise_degrees": 270, "confidence": 0.78, "reason": "filename indicates clockwise rotation in fake VLM"}
             if "upside-down" in stem or "upsidedown" in stem:
-                return {"needs_rotation": True, "clockwise_degrees": 180, "confidence": 0.78, "reason": "filename indicates upside-down rotation in fake VLM"}
-            return {"needs_rotation": False, "clockwise_degrees": 0, "confidence": 0.50, "reason": "fake VLM did not find rotation evidence"}
+                return {"needs_rotation": True, "action_clockwise_degrees": 180, "confidence": 0.78, "reason": "filename indicates upside-down rotation in fake VLM"}
+            return {"needs_rotation": False, "action_clockwise_degrees": 0, "confidence": 0.50, "reason": "fake VLM did not find rotation evidence"}
         stem_tokens = [token for token in image_path.stem.lower().replace("_", " ").replace("-", " ").split() if token]
         preferred = [tag for tag in (accepted_vocabulary or []) if tag in stem_tokens]
         candidate_tags = [

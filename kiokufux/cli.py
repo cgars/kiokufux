@@ -30,7 +30,7 @@ OPENCLIP_DOWNLOAD_NOTICE = (
     "Online services: no photo, metadata, or query data will be sent; "
     "OpenCLIP may contact the network only to download model weights if they are not cached."
 )
-ROTATION_VLM_PROMPT = """Determine only the rotation needed to make this image upright. Return only valid JSON with keys: needs_rotation (boolean), clockwise_degrees (one of 0, 90, 180, 270), confidence (0.0 to 1.0), and reason (short string). Do not describe the image, identify people, or add tags."""
+ROTATION_VLM_PROMPT = """Determine only the corrective action needed to make this image upright. Do not describe how the image currently looks except as a reason. Return only valid JSON with keys: needs_rotation (boolean), action_clockwise_degrees (the clockwise rotation to perform now; one of 0, 90, 180, 270), confidence (0.0 to 1.0), and reason (short string). If the image appears rotated 90 degrees right/clockwise, the corrective action is 270 clockwise; if it appears rotated 90 degrees left/counterclockwise, the corrective action is 90 clockwise. Do not identify people or add tags."""
 
 
 def _catalog(root: Path) -> tuple[Path, Catalog]:

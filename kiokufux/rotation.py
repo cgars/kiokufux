@@ -67,15 +67,35 @@ def detect_clockwise_rotation_from_description(text: str | None, source: str = "
     return RotationDetection(None, 0.20, source, "VLM description mentions orientation but not a usable direction")
 
 
+def _coerce_rotation_degrees(value: object) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _action_text_rotation(text: str, source: str, confidence: float) -> RotationDetection:
+    normalized = _normalized_orientation_text(text)
+    if "180" in normalized or "upside down" in normalized:
+        return RotationDetection(180, confidence, source, "VLM action says to rotate 180°")
+    if "counterclockwise" in normalized or "anti clockwise" in normalized or "anticlockwise" in normalized or "left" in normalized:
+        return RotationDetection(270, confidence, source, "VLM action says to rotate counterclockwise/left")
+    if "clockwise" in normalized or "right" in normalized:
+        return RotationDetection(90, confidence, source, "VLM action says to rotate clockwise/right")
+    return RotationDetection(None, confidence, source, "VLM action text did not contain a usable rotation direction")
+
+
 def detect_clockwise_rotation_from_vlm_response(raw: object, source: str = "fresh-vlm") -> RotationDetection:
     if not isinstance(raw, dict):
         return RotationDetection(None, 0.0, source, "VLM rotation response was not a JSON object")
     rotation = raw.get("rotation") if isinstance(raw.get("rotation"), dict) else raw
-    degrees_value = rotation.get("clockwise_degrees") or rotation.get("rotation_degrees") or rotation.get("degrees")
-    try:
-        degrees = int(degrees_value) if degrees_value is not None else None
-    except (TypeError, ValueError):
-        degrees = None
+    degrees = _coerce_rotation_degrees(
+        rotation.get("action_clockwise_degrees")
+        or rotation.get("correction_clockwise_degrees")
+        or rotation.get("clockwise_degrees")
+        or rotation.get("rotation_degrees")
+        or rotation.get("degrees")
+    )
     needs_rotation = rotation.get("needs_rotation")
     confidence_value = rotation.get("confidence", raw.get("confidence", 0.75))
     try:
@@ -88,11 +108,16 @@ def detect_clockwise_rotation_from_vlm_response(raw: object, source: str = "fres
     if degrees in VALID_ROTATION_DEGREES:
         return RotationDetection(degrees, confidence, source, reason)
 
-    text_bits = " ".join(str(rotation.get(key, "")) for key in ("orientation", "direction", "description", "reason"))
-    text_detection = detect_clockwise_rotation_from_description(text_bits, source=source)
+    action_text = " ".join(str(rotation.get(key, "")) for key in ("action", "corrective_action", "fix", "recommended_action"))
+    action_detection = _action_text_rotation(action_text, source, confidence) if action_text.strip() else None
+    if action_detection is not None and action_detection.degrees is not None:
+        return action_detection
+
+    appearance_text = " ".join(str(rotation.get(key, "")) for key in ("orientation", "direction", "description", "reason"))
+    text_detection = detect_clockwise_rotation_from_description(appearance_text, source=source)
     if text_detection.degrees is not None:
         return text_detection
-    return RotationDetection(None, confidence, source, "VLM rotation response did not contain usable clockwise_degrees")
+    return RotationDetection(None, confidence, source, "VLM rotation response did not contain usable corrective rotation")
 
 def _exif_clockwise_rotation(img: Image.Image) -> int | None:
     orientation = img.getexif().get(274)

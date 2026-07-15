@@ -12,7 +12,7 @@ from .embeddings import backend_from_options, generate_embeddings
 from .models import Photo, SearchResult, TagProposal, TagProposalSummary, TagVocabularyEntry
 from .hashing import file_sha256
 from .metadata import extract_metadata
-from .rotation import VALID_ROTATION_DEGREES, detect_clockwise_rotation, rotate_image
+from .rotation import VALID_ROTATION_DEGREES, detect_clockwise_rotation, detect_clockwise_rotation_from_description, rotate_image
 from .scanner import scan as scan_folder
 from .search import search as run_search
 from .sidecar import export_sidecars
@@ -73,7 +73,7 @@ def _embedding_backend(args: argparse.Namespace, config: KiokuFuxConfig):
 
 
 def _privacy_notice(args: argparse.Namespace, config: KiokuFuxConfig | None = None) -> str:
-    if getattr(args, "cmd", None) == "vlm-analyze" or (getattr(args, "cmd", None) == "rotate" and getattr(args, "vlm_fallback", False)):
+    if getattr(args, "cmd", None) == "vlm-analyze" or (getattr(args, "cmd", None) == "rotate" and (getattr(args, "vlm_fallback", False) or getattr(args, "vlm_only", False))):
         backend = getattr(args, "vlm_backend", None)
         url = str(getattr(args, "ollama_url", "") or "")
         if backend == "ollama" and not (url.startswith("http://localhost") or url.startswith("http://127.0.0.1") or url.startswith("http://[::1]")):
@@ -189,10 +189,11 @@ def _build_parser() -> argparse.ArgumentParser:
     rotation_mode.add_argument("--auto", action="store_true", help="Detect the clockwise rotation from EXIF or conservative image-content heuristics")
     rotate.add_argument("--no-backup", action="store_true", help="Do not write a same-folder .bak copy before rotating")
     rotate.add_argument("--vlm-fallback", action="store_true", help="If EXIF, stored VLM text, and local heuristics are uncertain, run a VLM analysis for rotation")
+    rotate.add_argument("--vlm-only", action="store_true", help="With --auto, skip EXIF/stored text/local heuristics and use only a fresh VLM orientation check")
     rotate.add_argument("--vlm-backend", default="fake", choices=["fake", "ollama"])
-    rotate.add_argument("--ollama-url", default="http://localhost:11434", help="Base URL for local or LAN Ollama server used by --vlm-fallback")
-    rotate.add_argument("--ollama-model", default="llava", help="Ollama vision model name used by --vlm-fallback")
-    rotate.add_argument("--vlm-timeout", type=float, default=120.0, help="VLM request timeout in seconds for --vlm-fallback")
+    rotate.add_argument("--ollama-url", default="http://localhost:11434", help="Base URL for local or LAN Ollama server used by rotation VLM options")
+    rotate.add_argument("--ollama-model", default="llava", help="Ollama vision model name used by rotation VLM options")
+    rotate.add_argument("--vlm-timeout", type=float, default=120.0, help="VLM request timeout in seconds for rotation VLM options")
     tag = sub.add_parser("tag")
     tag.add_argument("path", type=Path)
     tag.add_argument("photo_id")
@@ -309,16 +310,9 @@ def _rotation_vlm_backend(args: argparse.Namespace):
     )
 
 
-def _detect_rotation_for_photo(cat: Catalog, photo: Photo, args: argparse.Namespace, logger: logging.Logger):
-    detection = detect_clockwise_rotation(
-        photo.source_path,
-        description_text=_analysis_description_text(cat.get_image_analysis(photo.photo_id)),
-    )
-    if detection.degrees is not None or not args.vlm_fallback:
-        return detection
-
+def _run_rotation_vlm_analysis(cat: Catalog, photo: Photo, args: argparse.Namespace, logger: logging.Logger):
     backend = _rotation_vlm_backend(args)
-    logger.info("Running VLM rotation fallback for %s with %s", photo.source_path, backend.source)
+    logger.info("Running VLM rotation analysis for %s with %s", photo.source_path, backend.source)
     raw = backend.analyze_image(photo.source_path)
     analysis = parse_image_analysis(
         photo.photo_id,
@@ -328,7 +322,23 @@ def _detect_rotation_for_photo(cat: Catalog, photo: Photo, args: argparse.Namesp
         model_version=backend.model_version,
     )
     cat.upsert_image_analysis(analysis)
-    vlm_detection = detect_clockwise_rotation(photo.source_path, description_text=_analysis_description_text(analysis))
+    return analysis
+
+
+def _detect_rotation_for_photo(cat: Catalog, photo: Photo, args: argparse.Namespace, logger: logging.Logger):
+    if args.vlm_only:
+        analysis = _run_rotation_vlm_analysis(cat, photo, args, logger)
+        return detect_clockwise_rotation_from_description(_analysis_description_text(analysis))
+
+    detection = detect_clockwise_rotation(
+        photo.source_path,
+        description_text=_analysis_description_text(cat.get_image_analysis(photo.photo_id)),
+    )
+    if detection.degrees is not None or not args.vlm_fallback:
+        return detection
+
+    analysis = _run_rotation_vlm_analysis(cat, photo, args, logger)
+    vlm_detection = detect_clockwise_rotation_from_description(_analysis_description_text(analysis))
     if vlm_detection.degrees is not None:
         return vlm_detection
     return detection
@@ -345,6 +355,8 @@ def main(argv: list[str] | None = None) -> int:
     args.verbose = max(args.verbose, config.logging.verbose)
     logger = _setup_logging(ws, args.verbose)
     logger.debug("Parsed arguments: %s", args)
+    if getattr(args, "cmd", None) == "rotate" and getattr(args, "vlm_only", False) and not getattr(args, "auto", False):
+        parser.error("--vlm-only requires --auto")
     print(_privacy_notice(args, config))
 
     if args.cmd == "init":

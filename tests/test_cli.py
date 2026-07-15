@@ -302,8 +302,10 @@ def test_parser_accepts_rotate_command(tmp_path):
     assert batch_auto_args.auto is True
     assert batch_auto_args.vlm_fallback is False
     vlm_args = _build_parser().parse_args(["rotate", str(tmp_path), "--auto", "--vlm-fallback", "--vlm-backend", "ollama"])
+    vlm_only_args = _build_parser().parse_args(["rotate", str(tmp_path), "--auto", "--vlm-only"])
     assert vlm_args.vlm_fallback is True
     assert vlm_args.vlm_backend == "ollama"
+    assert vlm_only_args.vlm_only is True
     assert args.no_backup is False
 
 
@@ -535,3 +537,67 @@ def test_scan_progress_still_marks_deleted_files_missing(tmp_path):
     assert len(photos) == 1
     assert photos[0].relative_path == "deleted.jpg"
     assert photos[0].missing is True
+
+
+def test_auto_rotate_vlm_only_skips_local_textline_heuristic(tmp_path, capsys):
+    from kiokufux.catalog import Catalog
+    from kiokufux.cli import main
+    from kiokufux.hashing import file_sha256, photo_id_for_hash
+    from kiokufux.metadata import extract_metadata
+    from kiokufux.models import Photo
+    from PIL import Image, ImageDraw
+
+    upright = Image.new("RGB", (120, 80), "white")
+    draw = ImageDraw.Draw(upright)
+    for y in (20, 32, 44, 56):
+        draw.rectangle((16, y, 104, y + 3), fill="black")
+    image_path = tmp_path / "text.jpg"
+    upright.rotate(90, expand=True).save(image_path)
+    file_hash = file_sha256(image_path)
+    photo_id = photo_id_for_hash(file_hash)
+    catalog = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite")
+    catalog.init_schema()
+    catalog.upsert_photo(Photo(photo_id=photo_id, source_path=image_path, relative_path="text.jpg", file_hash=file_hash, **extract_metadata(image_path)))
+    catalog.close()
+
+    assert main(["rotate", str(tmp_path), photo_id[:7], "--auto", "--vlm-only", "--no-backup"]) == 0
+
+    output = capsys.readouterr().out
+    assert "source=vlm-description" in output
+    assert "No image changes made" in output
+    with Image.open(image_path) as rotated:
+        assert rotated.size == (80, 120)
+
+
+def test_auto_rotate_vlm_only_can_rotate_from_fresh_vlm_description(tmp_path, capsys):
+    from kiokufux.catalog import Catalog
+    from kiokufux.cli import main
+    from kiokufux.hashing import file_sha256, photo_id_for_hash
+    from kiokufux.metadata import extract_metadata
+    from kiokufux.models import Photo
+    from PIL import Image
+
+    image_path = tmp_path / "rotated-counterclockwise.jpg"
+    Image.new("RGB", (6, 10), "yellow").save(image_path)
+    file_hash = file_sha256(image_path)
+    photo_id = photo_id_for_hash(file_hash)
+    catalog = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite")
+    catalog.init_schema()
+    catalog.upsert_photo(Photo(photo_id=photo_id, source_path=image_path, relative_path=image_path.name, file_hash=file_hash, **extract_metadata(image_path)))
+    catalog.close()
+
+    assert main(["rotate", str(tmp_path), photo_id[:7], "--auto", "--vlm-only", "--no-backup"]) == 0
+
+    output = capsys.readouterr().out
+    assert "source=vlm-description" in output
+    with Image.open(image_path) as rotated:
+        assert rotated.size == (10, 6)
+
+
+def test_privacy_notice_for_rotate_remote_vlm_only_warns_photos_are_sent():
+    from argparse import Namespace
+    from kiokufux.cli import VLM_REMOTE_NOTICE, _privacy_notice
+
+    notice = _privacy_notice(Namespace(cmd="rotate", vlm_fallback=False, vlm_only=True, vlm_backend="ollama", ollama_url="http://gaming-pc:11434"))
+
+    assert notice == VLM_REMOTE_NOTICE

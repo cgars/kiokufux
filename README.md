@@ -13,7 +13,7 @@ KiokuFux MVP 1 is a local-first CLI prototype for indexing private photo archive
 - Stores embedding artifact paths relative to the `.kiokufux/` workspace so archives remain movable.
 - Runs text-to-image semantic search using cosine similarity.
 - Exports versioned `.kiokufux.json` sidecars next to photos.
-- Logs scan errors to `.kiokufux/logs/kiokufux.log` and records unreadable images without stopping the scan.
+- Prints scan progress to stderr, logs scan errors to `.kiokufux/logs/kiokufux.log`, and records unreadable images without stopping the scan.
 
 ## Installation
 

@@ -361,7 +361,17 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("Running command %s for %s", args.cmd, root)
     with cat:
         if args.cmd == "scan":
-            indexed, errors = scan_folder(root, cat, logger)
+            print(f"Scanning {root} recursively...", file=sys.stderr)
+
+            def scan_progress(scanned: int, path: Path, indexed_count: int, error_count: int) -> None:
+                if scanned == 1 or scanned % 25 == 0:
+                    rel = path.relative_to(root) if path.is_relative_to(root) else path
+                    print(
+                        f"Scanned {scanned} images; indexed/updated={indexed_count}; errors={error_count}; current={rel}",
+                        file=sys.stderr,
+                    )
+
+            indexed, errors = scan_folder(root, cat, logger, progress=scan_progress)
             logger.info("Scan complete: %s indexed/updated, %s errors", indexed, errors)
             print(f"Scan complete: {indexed} indexed/updated, {errors} errors")
         elif args.cmd == "thumbnails":

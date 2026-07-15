@@ -496,3 +496,18 @@ def test_privacy_notice_for_rotate_remote_vlm_fallback_warns_photos_are_sent():
     notice = _privacy_notice(Namespace(cmd="rotate", vlm_fallback=True, vlm_backend="ollama", ollama_url="http://gaming-pc:11434"))
 
     assert notice == VLM_REMOTE_NOTICE
+
+
+def test_scan_prints_progress_to_stderr(tmp_path, capsys):
+    from kiokufux.cli import main
+    from PIL import Image
+
+    Image.new("RGB", (4, 4), "red").save(tmp_path / "photo.jpg")
+
+    assert main(["scan", str(tmp_path)]) == 0
+
+    captured = capsys.readouterr()
+    assert "Scanning" in captured.err
+    assert "Scanned 1 images" in captured.err
+    assert "current=photo.jpg" in captured.err
+    assert "Scan complete: 1 indexed/updated, 0 errors" in captured.out

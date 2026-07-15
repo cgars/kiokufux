@@ -601,3 +601,37 @@ def test_privacy_notice_for_rotate_remote_vlm_only_warns_photos_are_sent():
     notice = _privacy_notice(Namespace(cmd="rotate", vlm_fallback=False, vlm_only=True, vlm_backend="ollama", ollama_url="http://gaming-pc:11434"))
 
     assert notice == VLM_REMOTE_NOTICE
+
+
+def test_vlm_only_ignores_existing_vlm_description(tmp_path, capsys):
+    from kiokufux.catalog import Catalog
+    from kiokufux.cli import main
+    from kiokufux.hashing import file_sha256, photo_id_for_hash
+    from kiokufux.metadata import extract_metadata
+    from kiokufux.models import Photo
+    from kiokufux.vlm import ImageAnalysis
+    from PIL import Image
+
+    image_path = tmp_path / "plain.jpg"
+    Image.new("RGB", (6, 10), "cyan").save(image_path)
+    file_hash = file_sha256(image_path)
+    photo_id = photo_id_for_hash(file_hash)
+    catalog = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite")
+    catalog.init_schema()
+    catalog.upsert_photo(Photo(photo_id=photo_id, source_path=image_path, relative_path=image_path.name, file_hash=file_hash, **extract_metadata(image_path)))
+    catalog.upsert_image_analysis(ImageAnalysis(
+        photo_id=photo_id,
+        source="vlm-test",
+        model_name="fake",
+        model_version="test",
+        description="The image appears rotated counterclockwise.",
+    ))
+    catalog.close()
+
+    assert main(["rotate", str(tmp_path), photo_id[:7], "--auto", "--vlm-only", "--no-backup"]) == 0
+
+    output = capsys.readouterr().out
+    assert "basis=fresh-vlm-only" in output
+    assert "decision=skip" in output
+    with Image.open(image_path) as rotated:
+        assert rotated.size == (6, 10)

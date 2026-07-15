@@ -12,7 +12,7 @@ from .embeddings import backend_from_options, generate_embeddings
 from .models import Photo, SearchResult, TagProposal, TagProposalSummary, TagVocabularyEntry
 from .hashing import file_sha256
 from .metadata import extract_metadata
-from .rotation import VALID_ROTATION_DEGREES, RotationDetection, detect_clockwise_rotation, detect_clockwise_rotation_from_description, rotate_image
+from .rotation import VALID_ROTATION_DEGREES, RotationDetection, detect_clockwise_rotation, detect_clockwise_rotation_from_vlm_response, rotate_image
 from .scanner import scan as scan_folder
 from .search import search as run_search
 from .sidecar import export_sidecars
@@ -30,7 +30,7 @@ OPENCLIP_DOWNLOAD_NOTICE = (
     "Online services: no photo, metadata, or query data will be sent; "
     "OpenCLIP may contact the network only to download model weights if they are not cached."
 )
-ROTATION_VLM_PROMPT = """Determine whether this image needs rotation to appear upright. Return only valid JSON with keys: caption, description, objects, scene, activity, aesthetic, candidate_tags, uncertain_tags, warnings. If the image is rotated, state clearly in description whether it appears rotated clockwise, counterclockwise, or upside down. If orientation is already upright or unclear, state that clearly. Do not identify named people."""
+ROTATION_VLM_PROMPT = """Determine only the rotation needed to make this image upright. Return only valid JSON with keys: needs_rotation (boolean), clockwise_degrees (one of 0, 90, 180, 270), confidence (0.0 to 1.0), and reason (short string). Do not describe the image, identify people, or add tags."""
 
 
 def _catalog(root: Path) -> tuple[Path, Catalog]:
@@ -315,25 +315,16 @@ def _rotation_vlm_backend(args: argparse.Namespace):
     )
 
 
-def _run_rotation_vlm_analysis(cat: Catalog, photo: Photo, args: argparse.Namespace, logger: logging.Logger):
+def _run_rotation_vlm_analysis(photo: Photo, args: argparse.Namespace, logger: logging.Logger):
     backend = _rotation_vlm_backend(args)
-    logger.info("Running VLM rotation analysis for %s with %s", photo.source_path, backend.source)
-    raw = backend.analyze_image(photo.source_path)
-    analysis = parse_image_analysis(
-        photo.photo_id,
-        raw,
-        source=backend.source,
-        model_name=backend.model_name,
-        model_version=backend.model_version,
-    )
-    cat.upsert_image_analysis(analysis)
-    return analysis
+    logger.info("Running direct VLM rotation check for %s with %s", photo.source_path, backend.source)
+    return backend.analyze_image(photo.source_path)
 
 
 def _detect_rotation_for_photo(cat: Catalog, photo: Photo, args: argparse.Namespace, logger: logging.Logger):
     if args.vlm_only:
-        analysis = _run_rotation_vlm_analysis(cat, photo, args, logger)
-        return detect_clockwise_rotation_from_description(_analysis_description_text(analysis), source="fresh-vlm-only")
+        raw = _run_rotation_vlm_analysis(photo, args, logger)
+        return detect_clockwise_rotation_from_vlm_response(raw, source="fresh-vlm-only")
 
     detection = detect_clockwise_rotation(
         photo.source_path,
@@ -342,8 +333,8 @@ def _detect_rotation_for_photo(cat: Catalog, photo: Photo, args: argparse.Namesp
     if detection.degrees is not None or not args.vlm_fallback:
         return detection
 
-    analysis = _run_rotation_vlm_analysis(cat, photo, args, logger)
-    vlm_detection = detect_clockwise_rotation_from_description(_analysis_description_text(analysis), source="fresh-vlm-fallback")
+    raw = _run_rotation_vlm_analysis(photo, args, logger)
+    vlm_detection = detect_clockwise_rotation_from_vlm_response(raw, source="fresh-vlm-fallback")
     if vlm_detection.degrees is not None:
         return vlm_detection
     return detection

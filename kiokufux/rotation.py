@@ -66,6 +66,34 @@ def detect_clockwise_rotation_from_description(text: str | None, source: str = "
         return RotationDetection(270, 0.78, source, "VLM description says the image is rotated clockwise/right")
     return RotationDetection(None, 0.20, source, "VLM description mentions orientation but not a usable direction")
 
+
+def detect_clockwise_rotation_from_vlm_response(raw: object, source: str = "fresh-vlm") -> RotationDetection:
+    if not isinstance(raw, dict):
+        return RotationDetection(None, 0.0, source, "VLM rotation response was not a JSON object")
+    rotation = raw.get("rotation") if isinstance(raw.get("rotation"), dict) else raw
+    degrees_value = rotation.get("clockwise_degrees") or rotation.get("rotation_degrees") or rotation.get("degrees")
+    try:
+        degrees = int(degrees_value) if degrees_value is not None else None
+    except (TypeError, ValueError):
+        degrees = None
+    needs_rotation = rotation.get("needs_rotation")
+    confidence_value = rotation.get("confidence", raw.get("confidence", 0.75))
+    try:
+        confidence = max(0.0, min(1.0, float(confidence_value)))
+    except (TypeError, ValueError):
+        confidence = 0.75
+    reason = str(rotation.get("reason") or raw.get("reason") or "fresh VLM rotation response")
+    if needs_rotation is False or degrees == 0:
+        return RotationDetection(None, confidence, source, reason)
+    if degrees in VALID_ROTATION_DEGREES:
+        return RotationDetection(degrees, confidence, source, reason)
+
+    text_bits = " ".join(str(rotation.get(key, "")) for key in ("orientation", "direction", "description", "reason"))
+    text_detection = detect_clockwise_rotation_from_description(text_bits, source=source)
+    if text_detection.degrees is not None:
+        return text_detection
+    return RotationDetection(None, confidence, source, "VLM rotation response did not contain usable clockwise_degrees")
+
 def _exif_clockwise_rotation(img: Image.Image) -> int | None:
     orientation = img.getexif().get(274)
     return {3: 180, 6: 90, 8: 270}.get(orientation)

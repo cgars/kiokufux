@@ -176,6 +176,7 @@ def backend_from_name(
     ollama_url: str | None = None,
     ollama_model: str | None = None,
     timeout: float = 120.0,
+    prompt: str | None = None,
 ) -> VisionLanguageBackend:
     backend = name or "fake"
     if backend == "fake":
@@ -185,6 +186,7 @@ def backend_from_name(
             base_url=ollama_url or "http://localhost:11434",
             model=ollama_model or "llava",
             timeout=timeout,
+            prompt=prompt or IMAGE_ANALYSIS_PROMPT,
         )
     raise ValueError(f"Unknown VLM backend: {backend}")
 

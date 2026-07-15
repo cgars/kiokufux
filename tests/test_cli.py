@@ -300,6 +300,10 @@ def test_parser_accepts_rotate_command(tmp_path):
     assert auto_args.degrees is None
     assert batch_auto_args.photo_id is None
     assert batch_auto_args.auto is True
+    assert batch_auto_args.vlm_fallback is False
+    vlm_args = _build_parser().parse_args(["rotate", str(tmp_path), "--auto", "--vlm-fallback", "--vlm-backend", "ollama"])
+    assert vlm_args.vlm_fallback is True
+    assert vlm_args.vlm_backend == "ollama"
     assert args.no_backup is False
 
 
@@ -458,3 +462,37 @@ def test_batch_auto_rotate_processes_all_indexed_images(tmp_path, capsys):
     with Image.open(tmp_path / "first.jpg") as first, Image.open(tmp_path / "nested/second.jpg") as second:
         assert first.size == (10, 6)
         assert second.size == (10, 6)
+
+
+def test_auto_rotate_vlm_fallback_runs_when_other_detection_is_uncertain(tmp_path, capsys):
+    from kiokufux.catalog import Catalog
+    from kiokufux.cli import main
+    from kiokufux.hashing import file_sha256, photo_id_for_hash
+    from kiokufux.metadata import extract_metadata
+    from kiokufux.models import Photo
+    from PIL import Image
+
+    image_path = tmp_path / "rotated-counterclockwise.jpg"
+    Image.new("RGB", (6, 10), "orange").save(image_path)
+    file_hash = file_sha256(image_path)
+    photo_id = photo_id_for_hash(file_hash)
+    catalog = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite")
+    catalog.init_schema()
+    catalog.upsert_photo(Photo(photo_id=photo_id, source_path=image_path, relative_path=image_path.name, file_hash=file_hash, **extract_metadata(image_path)))
+    catalog.close()
+
+    assert main(["rotate", str(tmp_path), photo_id[:7], "--auto", "--vlm-fallback", "--no-backup"]) == 0
+
+    output = capsys.readouterr().out
+    assert "source=vlm-description" in output
+    with Image.open(image_path) as rotated:
+        assert rotated.size == (10, 6)
+
+
+def test_privacy_notice_for_rotate_remote_vlm_fallback_warns_photos_are_sent():
+    from argparse import Namespace
+    from kiokufux.cli import VLM_REMOTE_NOTICE, _privacy_notice
+
+    notice = _privacy_notice(Namespace(cmd="rotate", vlm_fallback=True, vlm_backend="ollama", ollama_url="http://gaming-pc:11434"))
+
+    assert notice == VLM_REMOTE_NOTICE

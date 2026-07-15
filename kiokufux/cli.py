@@ -30,6 +30,7 @@ OPENCLIP_DOWNLOAD_NOTICE = (
     "Online services: no photo, metadata, or query data will be sent; "
     "OpenCLIP may contact the network only to download model weights if they are not cached."
 )
+ROTATION_VLM_PROMPT = """Determine whether this image needs rotation to appear upright. Return only valid JSON with keys: caption, description, objects, scene, activity, aesthetic, candidate_tags, uncertain_tags, warnings. If the image is rotated, state clearly in description whether it appears rotated clockwise, counterclockwise, or upside down. If orientation is already upright or unclear, state that clearly. Do not identify named people."""
 
 
 def _catalog(root: Path) -> tuple[Path, Catalog]:
@@ -72,7 +73,7 @@ def _embedding_backend(args: argparse.Namespace, config: KiokuFuxConfig):
 
 
 def _privacy_notice(args: argparse.Namespace, config: KiokuFuxConfig | None = None) -> str:
-    if getattr(args, "cmd", None) == "vlm-analyze":
+    if getattr(args, "cmd", None) == "vlm-analyze" or (getattr(args, "cmd", None) == "rotate" and getattr(args, "vlm_fallback", False)):
         backend = getattr(args, "vlm_backend", None)
         url = str(getattr(args, "ollama_url", "") or "")
         if backend == "ollama" and not (url.startswith("http://localhost") or url.startswith("http://127.0.0.1") or url.startswith("http://[::1]")):
@@ -187,6 +188,11 @@ def _build_parser() -> argparse.ArgumentParser:
     rotation_mode.add_argument("--degrees", type=int, choices=sorted(VALID_ROTATION_DEGREES), help="Clockwise rotation in degrees")
     rotation_mode.add_argument("--auto", action="store_true", help="Detect the clockwise rotation from EXIF or conservative image-content heuristics")
     rotate.add_argument("--no-backup", action="store_true", help="Do not write a same-folder .bak copy before rotating")
+    rotate.add_argument("--vlm-fallback", action="store_true", help="If EXIF, stored VLM text, and local heuristics are uncertain, run a VLM analysis for rotation")
+    rotate.add_argument("--vlm-backend", default="fake", choices=["fake", "ollama"])
+    rotate.add_argument("--ollama-url", default="http://localhost:11434", help="Base URL for local or LAN Ollama server used by --vlm-fallback")
+    rotate.add_argument("--ollama-model", default="llava", help="Ollama vision model name used by --vlm-fallback")
+    rotate.add_argument("--vlm-timeout", type=float, default=120.0, help="VLM request timeout in seconds for --vlm-fallback")
     tag = sub.add_parser("tag")
     tag.add_argument("path", type=Path)
     tag.add_argument("photo_id")
@@ -292,6 +298,41 @@ def _rotate_photo(cat: Catalog, photo: Photo, degrees: int, create_backup: bool,
     logger.info("Rotated %s clockwise by %s degrees", photo.source_path, degrees)
     return str(result.backup_path) if result.backup_path else None
 
+
+def _rotation_vlm_backend(args: argparse.Namespace):
+    return backend_from_name(
+        args.vlm_backend,
+        ollama_url=args.ollama_url,
+        ollama_model=args.ollama_model,
+        timeout=args.vlm_timeout,
+        prompt=ROTATION_VLM_PROMPT,
+    )
+
+
+def _detect_rotation_for_photo(cat: Catalog, photo: Photo, args: argparse.Namespace, logger: logging.Logger):
+    detection = detect_clockwise_rotation(
+        photo.source_path,
+        description_text=_analysis_description_text(cat.get_image_analysis(photo.photo_id)),
+    )
+    if detection.degrees is not None or not args.vlm_fallback:
+        return detection
+
+    backend = _rotation_vlm_backend(args)
+    logger.info("Running VLM rotation fallback for %s with %s", photo.source_path, backend.source)
+    raw = backend.analyze_image(photo.source_path)
+    analysis = parse_image_analysis(
+        photo.photo_id,
+        raw,
+        source=backend.source,
+        model_name=backend.model_name,
+        model_version=backend.model_version,
+    )
+    cat.upsert_image_analysis(analysis)
+    vlm_detection = detect_clockwise_rotation(photo.source_path, description_text=_analysis_description_text(analysis))
+    if vlm_detection.degrees is not None:
+        return vlm_detection
+    return detection
+
 def main(argv: list[str] | None = None) -> int:
     raw_argv = sys.argv[1:] if argv is None else argv
     cleaned_argv, extracted_verbose = _extract_verbose_args(raw_argv)
@@ -356,10 +397,7 @@ def main(argv: list[str] | None = None) -> int:
                     parser.error("rotate requires PHOTO_ID unless --auto is used for all indexed images")
                 rotated = skipped = 0
                 for photo in cat.list_photos():
-                    detection = detect_clockwise_rotation(
-                        photo.source_path,
-                        description_text=_analysis_description_text(cat.get_image_analysis(photo.photo_id)),
-                    )
+                    detection = _detect_rotation_for_photo(cat, photo, args, logger)
                     print(
                         f"{photo.relative_path}: source={detection.source} "
                         f"confidence={detection.confidence:.2f} reason={detection.reason}"
@@ -385,10 +423,7 @@ def main(argv: list[str] | None = None) -> int:
                 parser.error(f"No photo found for ID: {photo_id}")
             degrees = args.degrees
             if args.auto:
-                detection = detect_clockwise_rotation(
-                    photo.source_path,
-                    description_text=_analysis_description_text(cat.get_image_analysis(photo_id)),
-                )
+                detection = _detect_rotation_for_photo(cat, photo, args, logger)
                 print(f"Auto-rotation detection: source={detection.source} confidence={detection.confidence:.2f} reason={detection.reason}")
                 if detection.degrees is None:
                     logger.info("No confident auto-rotation for %s", photo.source_path)

@@ -18,7 +18,8 @@ from .scanner import scan as scan_folder
 from .search import search as run_search
 from .sidecar import export_sidecars
 from .thumbnails import generate_thumbnails
-from .vlm import IMAGE_ANALYSIS_PROMPT, backend_from_name, parse_image_analysis
+from .prompts import ROTATION_VLM_COMPARE_PROMPT, ROTATION_VLM_PROMPT, iter_prompts
+from .vlm import backend_from_name, parse_image_analysis
 
 LOGGER_NAME = "kiokufux"
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -31,9 +32,6 @@ OPENCLIP_DOWNLOAD_NOTICE = (
     "Online services: no photo, metadata, or query data will be sent; "
     "OpenCLIP may contact the network only to download model weights if they are not cached."
 )
-ROTATION_VLM_PROMPT = """Determine only the corrective action needed to make this image upright. Do not describe how the image currently looks except as a reason. Return only valid JSON with keys: needs_rotation (boolean), action_clockwise_degrees (the clockwise rotation to perform now; one of 0, 90, 180, 270), confidence (0.0 to 1.0), and reason (short string). If the image is already upright, return needs_rotation=false and action_clockwise_degrees=0; saying no corrective action is needed is a valid answer. If the image appears rotated 90 degrees right/clockwise, the corrective action is 270 clockwise; if it appears rotated 90 degrees left/counterclockwise, the corrective action is 90 clockwise. Do not identify people or add tags."""
-ROTATION_VLM_COMPARE_PROMPT = """You are shown one contact sheet with four labeled versions of the same image. Candidate A applies 0 degrees, B applies 90 degrees clockwise, C applies 180 degrees, and D applies 270 degrees clockwise to the original. Select the candidate that looks upright/correct. Return only valid JSON with keys: selected_candidate (A, B, C, or D), action_clockwise_degrees (0, 90, 180, or 270), needs_rotation (boolean), confidence (0.0 to 1.0), and reason (short string). It is valid to choose A and needs_rotation=false when the original is already upright. Do not identify people or add tags."""
-
 
 def _catalog(root: Path) -> tuple[Path, Catalog]:
     ws = ensure_workspace(root)
@@ -380,16 +378,9 @@ def _verify_vlm_rotation_once(photo: Photo, args: argparse.Namespace, logger: lo
 
 
 def _print_prompts(topic: str = "all") -> None:
-    prompts = [
-        ("rotation.direct_action", ROTATION_VLM_PROMPT),
-        ("rotation.candidate_comparison", ROTATION_VLM_COMPARE_PROMPT),
-        ("vlm-analysis.default", IMAGE_ANALYSIS_PROMPT),
-    ]
-    for name, prompt in prompts:
-        if topic != "all" and not name.startswith(topic):
-            continue
-        print(f"[{name}]")
-        print(prompt)
+    for prompt in iter_prompts(topic):
+        print(f"[{prompt.name}]")
+        print(prompt.text)
         print()
 
 

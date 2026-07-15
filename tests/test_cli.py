@@ -645,10 +645,14 @@ def test_direct_vlm_rotation_response_distinguishes_action_from_appearance():
     action = detect_clockwise_rotation_from_vlm_response({"needs_rotation": True, "action": "rotate 90 degrees counterclockwise"})
     appearance = detect_clockwise_rotation_from_vlm_response({"needs_rotation": True, "orientation": "the image appears rotated 90 degrees clockwise"})
     explicit_action = detect_clockwise_rotation_from_vlm_response({"needs_rotation": True, "action_clockwise_degrees": 270})
+    rotation_field = detect_clockwise_rotation_from_vlm_response({"rotation": 270})
+    uncertain = detect_clockwise_rotation_from_vlm_response({"rotation": "UNCERTAIN"})
 
     assert action.degrees == 270
     assert appearance.degrees == 270
     assert explicit_action.degrees == 270
+    assert rotation_field.degrees == 270
+    assert uncertain.degrees is None
 
 
 def test_vlm_verify_rechecks_once_without_second_rotation(tmp_path, capsys):
@@ -710,7 +714,7 @@ def test_prompts_command_prints_rotation_prompts_without_workspace(capsys):
 
     output = capsys.readouterr().out
     assert "[rotation.direct_action]" in output
-    assert "action_clockwise_degrees" in output
+    assert "Choose exactly one clockwise rotation" in output
     assert "[rotation.candidate_comparison]" in output
-    assert "selected_candidate" in output
+    assert "Candidate A applies 0 degrees" in output
     assert "[vlm-analysis.default]" not in output

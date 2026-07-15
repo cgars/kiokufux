@@ -88,9 +88,15 @@ def _action_text_rotation(text: str, source: str, confidence: float) -> Rotation
 def detect_clockwise_rotation_from_vlm_response(raw: object, source: str = "fresh-vlm") -> RotationDetection:
     if not isinstance(raw, dict):
         return RotationDetection(None, 0.0, source, "VLM rotation response was not a JSON object")
-    rotation = raw.get("rotation") if isinstance(raw.get("rotation"), dict) else raw
+    rotation_value = raw.get("rotation")
+    rotation = rotation_value if isinstance(rotation_value, dict) else raw
+    direct_rotation_value = None if isinstance(rotation_value, dict) else rotation_value
+    if isinstance(direct_rotation_value, str) and direct_rotation_value.strip().upper() == "UNCERTAIN":
+        return RotationDetection(None, 0.0, source, "VLM returned UNCERTAIN")
     degrees = _coerce_rotation_degrees(
-        rotation.get("action_clockwise_degrees")
+        direct_rotation_value
+        if direct_rotation_value is not None
+        else rotation.get("action_clockwise_degrees")
         or rotation.get("correction_clockwise_degrees")
         or rotation.get("clockwise_degrees")
         or rotation.get("rotation_degrees")

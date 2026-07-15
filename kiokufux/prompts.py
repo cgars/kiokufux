@@ -6,9 +6,41 @@ from typing import Iterable
 from .vlm import IMAGE_ANALYSIS_PROMPT
 
 
-ROTATION_VLM_PROMPT = """Determine only the corrective action needed to make this image upright. Do not describe how the image currently looks except as a reason. Return only valid JSON with keys: needs_rotation (boolean), action_clockwise_degrees (the clockwise rotation to perform now; one of 0, 90, 180, 270), confidence (0.0 to 1.0), and reason (short string). If the image is already upright, return needs_rotation=false and action_clockwise_degrees=0; saying no corrective action is needed is a valid answer. If the image appears rotated 90 degrees right/clockwise, the corrective action is 270 clockwise; if it appears rotated 90 degrees left/counterclockwise, the corrective action is 90 clockwise. Do not identify people or add tags."""
+ROTATION_VLM_PROMPT = """Determine the correct physical display orientation of this image.
 
-ROTATION_VLM_COMPARE_PROMPT = """You are shown one contact sheet with four labeled versions of the same image. Candidate A applies 0 degrees, B applies 90 degrees clockwise, C applies 180 degrees, and D applies 270 degrees clockwise to the original. Select the candidate that looks upright/correct. Return only valid JSON with keys: selected_candidate (A, B, C, or D), action_clockwise_degrees (0, 90, 180, or 270), needs_rotation (boolean), confidence (0.0 to 1.0), and reason (short string). It is valid to choose A and needs_rotation=false when the original is already upright. Do not identify people or add tags."""
+Choose exactly one clockwise rotation to apply to the supplied pixels:
+
+0
+90
+180
+270
+UNCERTAIN
+
+Judge which rotation makes people, faces, text, buildings, furniture, the horizon, gravity, and other scene elements naturally upright.
+
+Do not describe the image.
+Do not mentally compensate for the rotation.
+Return JSON only:
+
+{"rotation": 0}"""
+
+ROTATION_VLM_COMPARE_PROMPT = """You are shown one contact sheet with four labeled versions of the same image. Candidate A applies 0 degrees clockwise to the supplied pixels, B applies 90 degrees clockwise, C applies 180 degrees clockwise, and D applies 270 degrees clockwise.
+
+Choose exactly one clockwise rotation to apply to the original supplied pixels:
+
+0
+90
+180
+270
+UNCERTAIN
+
+Judge which candidate makes people, faces, text, buildings, furniture, the horizon, gravity, and other scene elements naturally upright.
+
+Do not describe the image.
+Do not mentally compensate for the rotation.
+Return JSON only:
+
+{"rotation": 0}"""
 
 
 @dataclass(frozen=True)

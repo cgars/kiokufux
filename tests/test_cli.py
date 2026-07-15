@@ -701,3 +701,16 @@ def test_vlm_compare_chooses_from_candidate_contact_sheet(tmp_path, capsys):
     assert "decision=rotate 270° clockwise" in output
     with Image.open(image_path) as rotated:
         assert rotated.size == (10, 6)
+
+
+def test_prompts_command_prints_rotation_prompts_without_workspace(capsys):
+    from kiokufux.cli import main
+
+    assert main(["prompts", "--topic", "rotation"]) == 0
+
+    output = capsys.readouterr().out
+    assert "[rotation.direct_action]" in output
+    assert "action_clockwise_degrees" in output
+    assert "[rotation.candidate_comparison]" in output
+    assert "selected_candidate" in output
+    assert "[vlm-analysis.default]" not in output

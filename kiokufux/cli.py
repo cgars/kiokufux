@@ -18,7 +18,7 @@ from .scanner import scan as scan_folder
 from .search import search as run_search
 from .sidecar import export_sidecars
 from .thumbnails import generate_thumbnails
-from .vlm import backend_from_name, parse_image_analysis
+from .vlm import IMAGE_ANALYSIS_PROMPT, backend_from_name, parse_image_analysis
 
 LOGGER_NAME = "kiokufux"
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -198,6 +198,8 @@ def _build_parser() -> argparse.ArgumentParser:
     rotate.add_argument("--ollama-url", default="http://localhost:11434", help="Base URL for local or LAN Ollama server used by rotation VLM options")
     rotate.add_argument("--ollama-model", default="llava", help="Ollama vision model name used by rotation VLM options")
     rotate.add_argument("--vlm-timeout", type=float, default=120.0, help="VLM request timeout in seconds for rotation VLM options")
+    prompts = sub.add_parser("prompts", help="Print VLM prompts used by KiokuFux")
+    prompts.add_argument("--topic", choices=["all", "rotation", "vlm-analysis"], default="all")
     tag = sub.add_parser("tag")
     tag.add_argument("path", type=Path)
     tag.add_argument("photo_id")
@@ -376,12 +378,30 @@ def _verify_vlm_rotation_once(photo: Photo, args: argparse.Namespace, logger: lo
     raw = _run_rotation_vlm_analysis(photo, args, logger)
     return detect_clockwise_rotation_from_vlm_response(raw, source="fresh-vlm-verification")
 
+
+def _print_prompts(topic: str = "all") -> None:
+    prompts = [
+        ("rotation.direct_action", ROTATION_VLM_PROMPT),
+        ("rotation.candidate_comparison", ROTATION_VLM_COMPARE_PROMPT),
+        ("vlm-analysis.default", IMAGE_ANALYSIS_PROMPT),
+    ]
+    for name, prompt in prompts:
+        if topic != "all" and not name.startswith(topic):
+            continue
+        print(f"[{name}]")
+        print(prompt)
+        print()
+
+
 def main(argv: list[str] | None = None) -> int:
     raw_argv = sys.argv[1:] if argv is None else argv
     cleaned_argv, extracted_verbose = _extract_verbose_args(raw_argv)
     parser = _build_parser()
     args = parser.parse_args(cleaned_argv)
     args.verbose = max(args.verbose, extracted_verbose)
+    if args.cmd == "prompts":
+        _print_prompts(args.topic)
+        return 0
     root = args.path.expanduser().resolve()
     ws = ensure_workspace(root)
     config = load_config(root)

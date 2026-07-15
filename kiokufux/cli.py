@@ -30,7 +30,7 @@ OPENCLIP_DOWNLOAD_NOTICE = (
     "Online services: no photo, metadata, or query data will be sent; "
     "OpenCLIP may contact the network only to download model weights if they are not cached."
 )
-ROTATION_VLM_PROMPT = """Determine only the corrective action needed to make this image upright. Do not describe how the image currently looks except as a reason. Return only valid JSON with keys: needs_rotation (boolean), action_clockwise_degrees (the clockwise rotation to perform now; one of 0, 90, 180, 270), confidence (0.0 to 1.0), and reason (short string). If the image appears rotated 90 degrees right/clockwise, the corrective action is 270 clockwise; if it appears rotated 90 degrees left/counterclockwise, the corrective action is 90 clockwise. Do not identify people or add tags."""
+ROTATION_VLM_PROMPT = """Determine only the corrective action needed to make this image upright. Do not describe how the image currently looks except as a reason. Return only valid JSON with keys: needs_rotation (boolean), action_clockwise_degrees (the clockwise rotation to perform now; one of 0, 90, 180, 270), confidence (0.0 to 1.0), and reason (short string). If the image is already upright, return needs_rotation=false and action_clockwise_degrees=0; saying no corrective action is needed is a valid answer. If the image appears rotated 90 degrees right/clockwise, the corrective action is 270 clockwise; if it appears rotated 90 degrees left/counterclockwise, the corrective action is 90 clockwise. Do not identify people or add tags."""
 
 
 def _catalog(root: Path) -> tuple[Path, Catalog]:
@@ -190,6 +190,7 @@ def _build_parser() -> argparse.ArgumentParser:
     rotate.add_argument("--no-backup", action="store_true", help="Do not write a same-folder .bak copy before rotating")
     rotate.add_argument("--vlm-fallback", action="store_true", help="If EXIF, stored VLM text, and local heuristics are uncertain, run a VLM analysis for rotation")
     rotate.add_argument("--vlm-only", action="store_true", help="With --auto, skip EXIF/stored text/local heuristics and use only a fresh VLM orientation check")
+    rotate.add_argument("--vlm-verify", action="store_true", help="After a fresh VLM-driven rotation, ask the VLM once more whether the result looks upright; never applies a second rotation")
     rotate.add_argument("--vlm-backend", default="fake", choices=["fake", "ollama"])
     rotate.add_argument("--ollama-url", default="http://localhost:11434", help="Base URL for local or LAN Ollama server used by rotation VLM options")
     rotate.add_argument("--ollama-model", default="llava", help="Ollama vision model name used by rotation VLM options")
@@ -339,6 +340,11 @@ def _detect_rotation_for_photo(cat: Catalog, photo: Photo, args: argparse.Namesp
         return vlm_detection
     return detection
 
+
+def _verify_vlm_rotation_once(photo: Photo, args: argparse.Namespace, logger: logging.Logger) -> RotationDetection:
+    raw = _run_rotation_vlm_analysis(photo, args, logger)
+    return detect_clockwise_rotation_from_vlm_response(raw, source="fresh-vlm-verification")
+
 def main(argv: list[str] | None = None) -> int:
     raw_argv = sys.argv[1:] if argv is None else argv
     cleaned_argv, extracted_verbose = _extract_verbose_args(raw_argv)
@@ -353,6 +359,8 @@ def main(argv: list[str] | None = None) -> int:
     logger.debug("Parsed arguments: %s", args)
     if getattr(args, "cmd", None) == "rotate" and getattr(args, "vlm_only", False) and not getattr(args, "auto", False):
         parser.error("--vlm-only requires --auto")
+    if getattr(args, "cmd", None) == "rotate" and getattr(args, "vlm_verify", False) and not getattr(args, "auto", False):
+        parser.error("--vlm-verify requires --auto")
     print(_privacy_notice(args, config))
 
     if args.cmd == "init":
@@ -423,6 +431,11 @@ def main(argv: list[str] | None = None) -> int:
                     backup_path = _rotate_photo(cat, photo, detection.degrees, create_backup=not args.no_backup, logger=logger)
                     backup = f"; backup: {backup_path}" if backup_path else ""
                     print(f"Rotated {photo.relative_path} clockwise by {detection.degrees} degrees{backup}")
+                    if args.vlm_verify and detection.source.startswith("fresh-vlm"):
+                        verification = _verify_vlm_rotation_once(photo, args, logger)
+                        print(_format_rotation_decision(f"{photo.relative_path} VLM verification after rotation", verification))
+                        if verification.degrees is not None:
+                            print(f"{photo.relative_path}: VLM verification still suggests rotation; no further automatic rotation will be applied.")
                     rotated += 1
                 print(f"Auto-rotation complete: {rotated} rotated, {skipped} skipped")
                 if rotated:
@@ -448,6 +461,11 @@ def main(argv: list[str] | None = None) -> int:
             backup_path = _rotate_photo(cat, photo, degrees, create_backup=not args.no_backup, logger=logger)
             backup = f"; backup: {backup_path}" if backup_path else ""
             print(f"Rotated {photo.relative_path} clockwise by {degrees} degrees{backup}")
+            if args.vlm_verify and args.auto and detection.source.startswith("fresh-vlm"):
+                verification = _verify_vlm_rotation_once(photo, args, logger)
+                print(_format_rotation_decision("VLM verification after rotation", verification))
+                if verification.degrees is not None:
+                    print("VLM verification still suggests rotation; no further automatic rotation will be applied.")
             print("Thumbnails and embeddings were invalidated; rerun thumbnails and embed when ready.")
         elif args.cmd == "tag":
             for tag in args.tags:

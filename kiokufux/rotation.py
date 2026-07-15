@@ -92,7 +92,7 @@ def detect_clockwise_rotation_from_vlm_response(raw: object, source: str = "fres
     rotation = rotation_value if isinstance(rotation_value, dict) else raw
     direct_rotation_value = None if isinstance(rotation_value, dict) else rotation_value
     if isinstance(direct_rotation_value, str) and direct_rotation_value.strip().upper() == "UNCERTAIN":
-        return RotationDetection(None, 0.0, source, "VLM returned UNCERTAIN")
+        return RotationDetection(None, 0.0, source, "VLM returned UNCERTAIN, so no safe rotation was applied")
     degrees = _coerce_rotation_degrees(
         direct_rotation_value
         if direct_rotation_value is not None
@@ -115,8 +115,10 @@ def detect_clockwise_rotation_from_vlm_response(raw: object, source: str = "fres
         degrees = candidate_degrees
         if degrees == 0:
             needs_rotation = False
-            reason = reason or "VLM selected already-upright candidate A"
+            reason = "VLM selected candidate A / 0° original, so no corrective rotation is needed"
     if needs_rotation is False or degrees == 0:
+        if degrees == 0:
+            reason = "VLM selected 0°, so no corrective rotation is needed"
         return RotationDetection(None, confidence, source, reason)
     if degrees in VALID_ROTATION_DEGREES:
         return RotationDetection(degrees, confidence, source, reason)

@@ -404,7 +404,7 @@ def test_auto_rotate_command_can_use_existing_vlm_description(tmp_path, capsys):
     assert main(["rotate", str(tmp_path), photo_id[:7], "--auto", "--no-backup"]) == 0
 
     output = capsys.readouterr().out
-    assert "basis=stored-vlm-description" in output
+    assert "checked=existing VLM description" in output
     with Image.open(image_path) as rotated:
         assert rotated.size == (10, 6)
 
@@ -460,8 +460,8 @@ def test_batch_auto_rotate_processes_all_indexed_images(tmp_path, capsys):
     assert main(["rotate", str(tmp_path), "--auto", "--no-backup"]) == 0
 
     output = capsys.readouterr().out
-    assert "first.jpg: decision=rotate 90° clockwise; basis=stored-vlm-description" in output
-    assert "nested/second.jpg: decision=rotate 270° clockwise; basis=stored-vlm-description" in output
+    assert "first.jpg: will rotate 90° clockwise; checked=existing VLM description" in output
+    assert "nested/second.jpg: will rotate 270° clockwise; checked=existing VLM description" in output
     assert "Auto-rotation complete: 2 rotated, 0 skipped" in output
     with Image.open(tmp_path / "first.jpg") as first, Image.open(tmp_path / "nested/second.jpg") as second:
         assert first.size == (10, 6)
@@ -488,7 +488,7 @@ def test_auto_rotate_vlm_fallback_runs_when_other_detection_is_uncertain(tmp_pat
     assert main(["rotate", str(tmp_path), photo_id[:7], "--auto", "--vlm-fallback", "--no-backup"]) == 0
 
     output = capsys.readouterr().out
-    assert "basis=fresh-vlm-fallback" in output
+    assert "checked=fresh VLM fallback after cheaper checks were uncertain" in output
     with Image.open(image_path) as rotated:
         assert rotated.size == (10, 6)
 
@@ -565,7 +565,7 @@ def test_auto_rotate_vlm_only_skips_local_textline_heuristic(tmp_path, capsys):
     assert main(["rotate", str(tmp_path), photo_id[:7], "--auto", "--vlm-only", "--no-backup"]) == 0
 
     output = capsys.readouterr().out
-    assert "basis=fresh-vlm-only" in output
+    assert "checked=fresh VLM check only (--vlm-only)" in output
     assert "No image changes made" in output
     with Image.open(image_path) as rotated:
         assert rotated.size == (80, 120)
@@ -591,7 +591,7 @@ def test_auto_rotate_vlm_only_can_rotate_from_fresh_vlm_description(tmp_path, ca
     assert main(["rotate", str(tmp_path), photo_id[:7], "--auto", "--vlm-only", "--no-backup"]) == 0
 
     output = capsys.readouterr().out
-    assert "basis=fresh-vlm-only" in output
+    assert "checked=fresh VLM check only (--vlm-only)" in output
     with Image.open(image_path) as rotated:
         assert rotated.size == (10, 6)
 
@@ -633,8 +633,8 @@ def test_vlm_only_ignores_existing_vlm_description(tmp_path, capsys):
     assert main(["rotate", str(tmp_path), photo_id[:7], "--auto", "--vlm-only", "--no-backup"]) == 0
 
     output = capsys.readouterr().out
-    assert "basis=fresh-vlm-only" in output
-    assert "decision=skip" in output
+    assert "checked=fresh VLM check only (--vlm-only)" in output
+    assert "no rotation applied" in output
     with Image.open(image_path) as rotated:
         assert rotated.size == (6, 10)
 
@@ -701,8 +701,8 @@ def test_vlm_compare_chooses_from_candidate_contact_sheet(tmp_path, capsys):
     assert main(["rotate", str(tmp_path), photo_id[:7], "--auto", "--vlm-only", "--vlm-compare", "--no-backup"]) == 0
 
     output = capsys.readouterr().out
-    assert "basis=fresh-vlm-only" in output
-    assert "decision=rotate 270° clockwise" in output
+    assert "checked=fresh VLM check only (--vlm-only)" in output
+    assert "will rotate 270° clockwise" in output
     with Image.open(image_path) as rotated:
         assert rotated.size == (10, 6)
 

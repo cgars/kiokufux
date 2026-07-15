@@ -304,9 +304,23 @@ def _rotate_photo(cat: Catalog, photo: Photo, degrees: int, create_backup: bool,
     return str(result.backup_path) if result.backup_path else None
 
 
+def _rotation_basis_label(source: str) -> str:
+    labels = {
+        "exif": "EXIF orientation metadata",
+        "stored-vlm-description": "existing VLM description",
+        "textline-heuristic": "local text-line heuristic",
+        "fresh-vlm-only": "fresh VLM check only (--vlm-only)",
+        "fresh-vlm-fallback": "fresh VLM fallback after cheaper checks were uncertain",
+        "fresh-vlm-verification": "one-shot fresh VLM verification after rotation",
+    }
+    return labels.get(source, source)
+
+
 def _format_rotation_decision(prefix: str, detection: RotationDetection) -> str:
-    action = f"rotate {detection.degrees}° clockwise" if detection.degrees is not None else "skip"
-    return f"{prefix}: decision={action}; basis={detection.source}; confidence={detection.confidence:.2f}; reason={detection.reason}"
+    basis = _rotation_basis_label(detection.source)
+    if detection.degrees is None:
+        return f"{prefix}: no rotation applied; checked={basis}; confidence={detection.confidence:.2f}; why={detection.reason}"
+    return f"{prefix}: will rotate {detection.degrees}° clockwise; checked={basis}; confidence={detection.confidence:.2f}; why={detection.reason}"
 
 
 def _rotation_vlm_backend(args: argparse.Namespace):

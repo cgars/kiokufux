@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import tempfile
 from pathlib import Path
 
 from .autotagging import EmbeddingAutoTagger, normalize_candidate_tags, propose_tags
@@ -31,6 +32,7 @@ OPENCLIP_DOWNLOAD_NOTICE = (
     "OpenCLIP may contact the network only to download model weights if they are not cached."
 )
 ROTATION_VLM_PROMPT = """Determine only the corrective action needed to make this image upright. Do not describe how the image currently looks except as a reason. Return only valid JSON with keys: needs_rotation (boolean), action_clockwise_degrees (the clockwise rotation to perform now; one of 0, 90, 180, 270), confidence (0.0 to 1.0), and reason (short string). If the image is already upright, return needs_rotation=false and action_clockwise_degrees=0; saying no corrective action is needed is a valid answer. If the image appears rotated 90 degrees right/clockwise, the corrective action is 270 clockwise; if it appears rotated 90 degrees left/counterclockwise, the corrective action is 90 clockwise. Do not identify people or add tags."""
+ROTATION_VLM_COMPARE_PROMPT = """You are shown one contact sheet with four labeled versions of the same image. Candidate A applies 0 degrees, B applies 90 degrees clockwise, C applies 180 degrees, and D applies 270 degrees clockwise to the original. Select the candidate that looks upright/correct. Return only valid JSON with keys: selected_candidate (A, B, C, or D), action_clockwise_degrees (0, 90, 180, or 270), needs_rotation (boolean), confidence (0.0 to 1.0), and reason (short string). It is valid to choose A and needs_rotation=false when the original is already upright. Do not identify people or add tags."""
 
 
 def _catalog(root: Path) -> tuple[Path, Catalog]:
@@ -191,6 +193,7 @@ def _build_parser() -> argparse.ArgumentParser:
     rotate.add_argument("--vlm-fallback", action="store_true", help="If EXIF, stored VLM text, and local heuristics are uncertain, run a VLM analysis for rotation")
     rotate.add_argument("--vlm-only", action="store_true", help="With --auto, skip EXIF/stored text/local heuristics and use only a fresh VLM orientation check")
     rotate.add_argument("--vlm-verify", action="store_true", help="After a fresh VLM-driven rotation, ask the VLM once more whether the result looks upright; never applies a second rotation")
+    rotate.add_argument("--vlm-compare", action="store_true", help="For fresh VLM checks, ask the VLM to choose among 0/90/180/270-degree candidate previews instead of judging one image")
     rotate.add_argument("--vlm-backend", default="fake", choices=["fake", "ollama"])
     rotate.add_argument("--ollama-url", default="http://localhost:11434", help="Base URL for local or LAN Ollama server used by rotation VLM options")
     rotate.add_argument("--ollama-model", default="llava", help="Ollama vision model name used by rotation VLM options")
@@ -312,12 +315,40 @@ def _rotation_vlm_backend(args: argparse.Namespace):
         ollama_url=args.ollama_url,
         ollama_model=args.ollama_model,
         timeout=args.vlm_timeout,
-        prompt=ROTATION_VLM_PROMPT,
+        prompt=ROTATION_VLM_COMPARE_PROMPT if args.vlm_compare else ROTATION_VLM_PROMPT,
     )
+
+
+def _build_rotation_candidate_sheet(photo: Photo, target: Path) -> None:
+    from PIL import Image, ImageDraw, ImageOps
+
+    with Image.open(photo.source_path) as img:
+        base = ImageOps.exif_transpose(img).convert("RGB")
+    candidates = [("A", 0), ("B", 90), ("C", 180), ("D", 270)]
+    thumbs = []
+    for label, degrees in candidates:
+        thumb = base.rotate(-degrees, expand=True)
+        thumb.thumbnail((360, 360), Image.Resampling.LANCZOS)
+        canvas = Image.new("RGB", (380, 410), "white")
+        x = (380 - thumb.width) // 2
+        canvas.paste(thumb, (x, 40))
+        draw = ImageDraw.Draw(canvas)
+        draw.text((12, 10), f"{label}: {degrees}° clockwise", fill="black")
+        thumbs.append(canvas)
+    sheet = Image.new("RGB", (760, 820), "white")
+    for index, thumb in enumerate(thumbs):
+        sheet.paste(thumb, ((index % 2) * 380, (index // 2) * 410))
+    sheet.save(target, "JPEG", quality=90)
 
 
 def _run_rotation_vlm_analysis(photo: Photo, args: argparse.Namespace, logger: logging.Logger):
     backend = _rotation_vlm_backend(args)
+    if args.vlm_compare:
+        logger.info("Running VLM rotation candidate comparison for %s with %s", photo.source_path, backend.source)
+        with tempfile.TemporaryDirectory(prefix="kiokufux-rotation-") as tmpdir:
+            sheet_path = Path(tmpdir) / f"{photo.source_path.stem}-rotation-candidates.jpg"
+            _build_rotation_candidate_sheet(photo, sheet_path)
+            return backend.analyze_image(sheet_path)
     logger.info("Running direct VLM rotation check for %s with %s", photo.source_path, backend.source)
     return backend.analyze_image(photo.source_path)
 

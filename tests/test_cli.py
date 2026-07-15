@@ -302,11 +302,12 @@ def test_parser_accepts_rotate_command(tmp_path):
     assert batch_auto_args.auto is True
     assert batch_auto_args.vlm_fallback is False
     vlm_args = _build_parser().parse_args(["rotate", str(tmp_path), "--auto", "--vlm-fallback", "--vlm-backend", "ollama"])
-    vlm_only_args = _build_parser().parse_args(["rotate", str(tmp_path), "--auto", "--vlm-only", "--vlm-verify"])
+    vlm_only_args = _build_parser().parse_args(["rotate", str(tmp_path), "--auto", "--vlm-only", "--vlm-verify", "--vlm-compare"])
     assert vlm_args.vlm_fallback is True
     assert vlm_args.vlm_backend == "ollama"
     assert vlm_only_args.vlm_only is True
     assert vlm_only_args.vlm_verify is True
+    assert vlm_only_args.vlm_compare is True
     assert args.no_backup is False
 
 
@@ -672,5 +673,31 @@ def test_vlm_verify_rechecks_once_without_second_rotation(tmp_path, capsys):
     output = capsys.readouterr().out
     assert "VLM verification after rotation" in output
     assert "no further automatic rotation will be applied" in output
+    with Image.open(image_path) as rotated:
+        assert rotated.size == (10, 6)
+
+
+def test_vlm_compare_chooses_from_candidate_contact_sheet(tmp_path, capsys):
+    from kiokufux.catalog import Catalog
+    from kiokufux.cli import main
+    from kiokufux.hashing import file_sha256, photo_id_for_hash
+    from kiokufux.metadata import extract_metadata
+    from kiokufux.models import Photo
+    from PIL import Image
+
+    image_path = tmp_path / "rotated-clockwise.jpg"
+    Image.new("RGB", (6, 10), "magenta").save(image_path)
+    file_hash = file_sha256(image_path)
+    photo_id = photo_id_for_hash(file_hash)
+    catalog = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite")
+    catalog.init_schema()
+    catalog.upsert_photo(Photo(photo_id=photo_id, source_path=image_path, relative_path=image_path.name, file_hash=file_hash, **extract_metadata(image_path)))
+    catalog.close()
+
+    assert main(["rotate", str(tmp_path), photo_id[:7], "--auto", "--vlm-only", "--vlm-compare", "--no-backup"]) == 0
+
+    output = capsys.readouterr().out
+    assert "basis=fresh-vlm-only" in output
+    assert "decision=rotate 270° clockwise" in output
     with Image.open(image_path) as rotated:
         assert rotated.size == (10, 6)

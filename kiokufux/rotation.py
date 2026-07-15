@@ -103,6 +103,13 @@ def detect_clockwise_rotation_from_vlm_response(raw: object, source: str = "fres
     except (TypeError, ValueError):
         confidence = 0.75
     reason = str(rotation.get("reason") or raw.get("reason") or "fresh VLM rotation response")
+    candidate = str(rotation.get("selected_candidate") or rotation.get("candidate") or rotation.get("upright_candidate") or "").strip().lower()
+    candidate_degrees = {"a": 0, "b": 90, "c": 180, "d": 270}.get(candidate)
+    if candidate_degrees is not None:
+        degrees = candidate_degrees
+        if degrees == 0:
+            needs_rotation = False
+            reason = reason or "VLM selected already-upright candidate A"
     if needs_rotation is False or degrees == 0:
         return RotationDetection(None, confidence, source, reason)
     if degrees in VALID_ROTATION_DEGREES:

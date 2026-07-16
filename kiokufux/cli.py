@@ -17,6 +17,7 @@ from .rotation import VALID_ROTATION_DEGREES, RotationDetection, detect_clockwis
 from .scanner import scan as scan_folder
 from .search import search as run_search
 from .sidecar import export_sidecars
+from .gallery import export_gallery
 from .thumbnails import generate_thumbnails
 from .prompts import ROTATION_VLM_COMPARE_PROMPT, ROTATION_VLM_PROMPT, iter_prompts
 from .vlm import backend_from_name, parse_image_analysis
@@ -181,6 +182,18 @@ def _build_parser() -> argparse.ArgumentParser:
     for name in ["init", "scan", "thumbnails", "export-sidecars"]:
         sp = sub.add_parser(name)
         sp.add_argument("path", type=Path)
+    gallery = sub.add_parser("export-gallery")
+    gallery.add_argument("path", type=Path)
+    gallery.add_argument("output", type=Path)
+    gallery.add_argument("--title", default="KiokuFux Gallery")
+    gallery.add_argument("--query")
+    gallery.add_argument("--tag", action="append", default=[])
+    gallery.add_argument("--top-k", type=int)
+    gallery.add_argument("--min-tag-count", type=int, default=2)
+    gallery.add_argument("--max-cloud-tags", type=int, default=40)
+    gallery.add_argument("--image-max-size", type=int)
+    gallery.add_argument("--overwrite", action="store_true")
+    _add_embedding_options(gallery)
     rotate = sub.add_parser("rotate")
     rotate.add_argument("path", type=Path)
     rotate.add_argument("photo_id", nargs="?", help="Full photo ID or unique prefix of at least 7 characters; omit with --auto to process all indexed images")
@@ -485,6 +498,22 @@ def main(argv: list[str] | None = None) -> int:
             exported = export_sidecars(cat)
             logger.info("Exported %s sidecars", exported)
             print(f"Exported {exported} sidecars")
+        elif args.cmd == "export-gallery":
+            result = export_gallery(
+                cat,
+                args.output.expanduser().resolve(),
+                title=args.title,
+                query=args.query,
+                tags=args.tag,
+                top_k=(args.top_k if args.top_k is not None else config.search.top_k),
+                min_tag_count=args.min_tag_count,
+                max_cloud_tags=args.max_cloud_tags,
+                image_max_size=args.image_max_size,
+                overwrite=args.overwrite,
+                backend=_embedding_backend(args, config) if args.query else None,
+            )
+            logger.info("Exported gallery to %s: %s exported, %s skipped", result.output, result.exported, result.skipped)
+            print(f"Exported gallery to {result.output}: selected={result.selected}, exported={result.exported}, skipped={result.skipped}")
         elif args.cmd == "rotate":
             if args.photo_id is None:
                 if not args.auto:

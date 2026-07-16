@@ -413,10 +413,22 @@ def main(argv: list[str] | None = None) -> int:
     args.verbose = max(args.verbose, config.logging.verbose)
     logger = _setup_logging(ws, args.verbose)
     logger.debug("Parsed arguments: %s", args)
-    if getattr(args, "cmd", None) == "rotate" and getattr(args, "vlm_only", False) and not getattr(args, "auto", False):
-        parser.error("--vlm-only requires --auto")
-    if getattr(args, "cmd", None) == "rotate" and getattr(args, "vlm_verify", False) and not getattr(args, "auto", False):
-        parser.error("--vlm-verify requires --auto")
+    if getattr(args, "cmd", None) == "rotate":
+        auto = getattr(args, "auto", False)
+        vlm_only = getattr(args, "vlm_only", False)
+        vlm_fallback = getattr(args, "vlm_fallback", False)
+        vlm_verify = getattr(args, "vlm_verify", False)
+        vlm_compare = getattr(args, "vlm_compare", False)
+        if vlm_only and not auto:
+            parser.error("--vlm-only requires --auto")
+        if vlm_fallback and not auto:
+            parser.error("--vlm-fallback requires --auto")
+        if vlm_compare and not (vlm_only or vlm_fallback):
+            parser.error("--vlm-compare requires --vlm-only or --vlm-fallback")
+        if vlm_verify and not auto:
+            parser.error("--vlm-verify requires --auto")
+        if vlm_verify and not (vlm_only or vlm_fallback):
+            parser.error("--vlm-verify requires --vlm-only or --vlm-fallback")
     print(_privacy_notice(args, config))
 
     if args.cmd == "init":

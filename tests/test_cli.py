@@ -336,9 +336,12 @@ def test_rotate_command_rotates_image_and_invalidates_catalog(tmp_path):
         assert rotated.size == (4, 8)
     assert (tmp_path / "wide.jpg.bak").exists()
 
+    new_file_hash = file_sha256(image_path)
+    new_photo_id = photo_id_for_hash(new_file_hash)
     catalog = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite")
     catalog.init_schema()
-    photo = catalog.get_photo(photo_id)
+    assert catalog.get_photo(photo_id) is None
+    photo = catalog.get_photo(new_photo_id)
     assert photo is not None
     assert photo.width == 4
     assert photo.height == 8

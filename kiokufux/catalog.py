@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from .hashing import photo_id_for_hash
 from .models import Embedding, Photo, PhotoTag, TagProposal, TagProposalSummary, TagVocabularyEntry
 from .vlm import ImageAnalysis
 
@@ -253,22 +254,27 @@ class Catalog:
 
 
     def mark_photo_edited(self, photo_id: str, file_hash: str, metadata: dict[str, Any]) -> None:
+        new_photo_id = photo_id_for_hash(file_hash)
+        self.conn.execute("DELETE FROM embeddings WHERE photo_id=?", (photo_id,))
+        self.conn.execute("DELETE FROM image_analyses WHERE photo_id=?", (photo_id,))
+        if new_photo_id != photo_id:
+            self.conn.execute("UPDATE photo_tags SET photo_id=? WHERE photo_id=?", (new_photo_id, photo_id))
+            self.conn.execute("UPDATE tag_proposals SET photo_id=? WHERE photo_id=?", (new_photo_id, photo_id))
+            self.conn.execute("UPDATE tag_proposal_evidence SET photo_id=? WHERE photo_id=?", (new_photo_id, photo_id))
         self.conn.execute(
             """
             UPDATE photos SET
-              file_hash=?, file_size=?, mime_type=?, width=?, height=?, created_at_file=?, modified_at_file=?,
+              photo_id=?, file_hash=?, file_size=?, mime_type=?, width=?, height=?, created_at_file=?, modified_at_file=?,
               exif_datetime_original=?, exif_gps_lat=?, exif_gps_lon=?, thumbnail_path=NULL,
               embedding_status='pending', updated_at=?, error=NULL
             WHERE photo_id=?
             """,
             (
-                file_hash, metadata.get("file_size"), metadata.get("mime_type"), metadata.get("width"), metadata.get("height"),
+                new_photo_id, file_hash, metadata.get("file_size"), metadata.get("mime_type"), metadata.get("width"), metadata.get("height"),
                 metadata.get("created_at_file"), metadata.get("modified_at_file"), metadata.get("exif_datetime_original"),
                 metadata.get("exif_gps_lat"), metadata.get("exif_gps_lon"), now_iso(), photo_id,
             ),
         )
-        self.conn.execute("DELETE FROM embeddings WHERE photo_id=?", (photo_id,))
-        self.conn.execute("DELETE FROM image_analyses WHERE photo_id=?", (photo_id,))
         self.conn.commit()
 
     def set_thumbnail(self, photo_id: str, path: Path) -> None:

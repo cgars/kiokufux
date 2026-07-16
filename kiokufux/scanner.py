@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import replace
 from pathlib import Path
+from typing import Callable
 
 from .catalog import Catalog
 from .config import SUPPORTED_EXTENSIONS, WORKSPACE_NAME
@@ -19,10 +20,12 @@ def iter_images(root: Path):
             yield path
 
 
-def scan(root: Path, catalog: Catalog, logger: logging.Logger) -> tuple[int, int]:
+def scan(root: Path, catalog: Catalog, logger: logging.Logger, progress: Callable[[int, Path, int, int], None] | None = None) -> tuple[int, int]:
     seen: list[str] = []
     indexed = errors = 0
+    scanned = 0
     for path in iter_images(root):
+        scanned += 1
         rel = str(path.relative_to(root))
         try:
             file_hash = file_sha256(path)
@@ -39,11 +42,18 @@ def scan(root: Path, catalog: Catalog, logger: logging.Logger) -> tuple[int, int
             catalog.upsert_photo(Photo(photo_id=photo_id, source_path=resolved, relative_path=rel, file_hash=file_hash, **meta))
             indexed += 1
         except Exception as exc:
-            errors += 1; logger.exception("Failed to scan %s", path)
+            errors += 1
+            logger.exception("Failed to scan %s", path)
             try:
-                fh = file_sha256(path); pid = photo_id_for_hash(fh)
+                fh = file_sha256(path)
+                pid = photo_id_for_hash(fh)
             except Exception:
-                fh = f"unreadable:{path.resolve()}"; pid = photo_id_for_hash(fh)
-            seen.append(pid); catalog.record_error(pid, path.resolve(), rel, fh, str(exc))
+                fh = f"unreadable:{path.resolve()}"
+                pid = photo_id_for_hash(fh)
+            seen.append(pid)
+            catalog.record_error(pid, path.resolve(), rel, fh, str(exc))
+        finally:
+            if progress is not None:
+                progress(scanned, path, indexed, errors)
     catalog.mark_missing_except(seen)
     return indexed, errors

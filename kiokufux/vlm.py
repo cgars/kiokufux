@@ -61,7 +61,28 @@ class FakeVisionLanguageBackend(VisionLanguageBackend):
     model_version = "test"
     source = VLM_SOURCE
 
+    def __init__(self, prompt: str | None = None) -> None:
+        self.prompt = prompt or IMAGE_ANALYSIS_PROMPT
+
     def analyze_image(self, image_path: Path, accepted_vocabulary: list[str] | None = None) -> dict[str, Any]:
+        if "selected_candidate" in self.prompt:
+            stem = image_path.stem.lower()
+            if "counterclockwise" in stem or "anticlockwise" in stem or "rotated-left" in stem:
+                return {"selected_candidate": "B", "rotation": 90}
+            if "clockwise" in stem or "rotated-right" in stem:
+                return {"selected_candidate": "D", "rotation": 270}
+            if "upside-down" in stem or "upsidedown" in stem:
+                return {"selected_candidate": "C", "rotation": 180}
+            return {"selected_candidate": "A", "rotation": 0}
+        if "\"rotation\"" in self.prompt or "action_clockwise_degrees" in self.prompt or "clockwise_degrees" in self.prompt:
+            stem = image_path.stem.lower()
+            if "counterclockwise" in stem or "anticlockwise" in stem or "rotated-left" in stem:
+                return {"rotation": 90}
+            if "clockwise" in stem or "rotated-right" in stem:
+                return {"rotation": 270}
+            if "upside-down" in stem or "upsidedown" in stem:
+                return {"rotation": 180}
+            return {"rotation": 0}
         stem_tokens = [token for token in image_path.stem.lower().replace("_", " ").replace("-", " ").split() if token]
         preferred = [tag for tag in (accepted_vocabulary or []) if tag in stem_tokens]
         candidate_tags = [
@@ -176,15 +197,17 @@ def backend_from_name(
     ollama_url: str | None = None,
     ollama_model: str | None = None,
     timeout: float = 120.0,
+    prompt: str | None = None,
 ) -> VisionLanguageBackend:
     backend = name or "fake"
     if backend == "fake":
-        return FakeVisionLanguageBackend()
+        return FakeVisionLanguageBackend(prompt=prompt)
     if backend == "ollama":
         return OllamaVisionLanguageBackend(
             base_url=ollama_url or "http://localhost:11434",
             model=ollama_model or "llava",
             timeout=timeout,
+            prompt=prompt or IMAGE_ANALYSIS_PROMPT,
         )
     raise ValueError(f"Unknown VLM backend: {backend}")
 

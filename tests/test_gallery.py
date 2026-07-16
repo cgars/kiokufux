@@ -59,7 +59,11 @@ def test_export_gallery_writes_portable_files_and_filters_by_tag(tmp_path):
     script = (tmp_path / "out" / "gallery.js").read_text()
     assert 'id="gallery-data" type="application/json"' in index
     assert '"caption": "Sunny beach"' in index
+    assert '<link rel="stylesheet" href="style.css">' not in index
+    assert '<script src="gallery.js"></script>' not in index
+    assert 'data = JSON.parse(document.querySelector("#gallery-data").textContent);' in index
     assert "fetch(" not in script
+    assert "fetch(" not in index
 
 
 def test_export_gallery_safely_embeds_markup_in_metadata(tmp_path):

@@ -178,11 +178,19 @@ def _write_gallery_template_files(
     # fetch(), which browsers block for file:// URLs. Escaping '<' prevents data
     # containing a closing script tag from ending this JSON script element.
     gallery_json = json.dumps(document, sort_keys=True).replace("<", "\\u003c")
+    style_css = template_root.joinpath("style.css").read_text(encoding="utf-8")
+    gallery_js = template_root.joinpath("gallery.js").read_text(encoding="utf-8")
+    # Keep the browser from interpreting a future literal closing tag in an
+    # asset as the end of its inline element.
+    style_css = style_css.replace("</style", "<\\/style")
+    gallery_js = gallery_js.replace("</script", "<\\/script")
     index_template = Template(template_root.joinpath("index.html").read_text(encoding="utf-8"))
     rendered = index_template.safe_substitute(
         title=html.escape(title),
         config_json=config_json,
         gallery_json=gallery_json,
+        style_css=style_css,
+        gallery_js=gallery_js,
     )
     (output / "index.html").write_text(rendered, encoding="utf-8")
     for asset_name in ("style.css", "gallery.js"):

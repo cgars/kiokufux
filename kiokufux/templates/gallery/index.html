@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>$title</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="toolbar">
+    <h1>$title</h1>
+    <label class="search-label" for="q">Search gallery metadata</label>
+    <div class="search-row">
+      <input id="q" type="search" placeholder="Search filename, caption, description, tags" aria-label="Search metadata">
+      <button id="clear" type="button">Clear</button>
+    </div>
+    <p id="state" class="state" aria-live="polite"></p>
+    <div id="cloud" class="cloud" aria-label="Tag cloud"></div>
+  </header>
+  <main>
+    <div id="grid" class="grid"></div>
+    <p id="empty" class="empty" hidden>No matching photos. Clear the search or selected tag.</p>
+  </main>
+  <dialog id="box" class="lightbox">
+    <div class="lightbox-actions">
+      <button id="close" type="button">Close (Esc)</button>
+      <button id="prev" type="button">Previous</button>
+      <button id="next" type="button">Next</button>
+    </div>
+    <figure>
+      <img id="full" alt="">
+      <figcaption id="cap"></figcaption>
+    </figure>
+    <p id="detail" class="meta"></p>
+  </dialog>
+  <script>window.KIOKUFUX_GALLERY_CONFIG = $config_json;</script>
+  <script src="gallery.js"></script>
+</body>
+</html>

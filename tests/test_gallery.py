@@ -50,5 +50,7 @@ def test_export_gallery_writes_portable_files_and_filters_by_tag(tmp_path):
     assert doc["items"][0]["caption"] == "Sunny beach"
     assert doc["items"][0]["image_path"] == "images/id1.jpg"
     assert (tmp_path / "out" / "index.html").exists()
+    assert (tmp_path / "out" / "style.css").exists()
+    assert (tmp_path / "out" / "gallery.js").exists()
     assert (tmp_path / "out" / "images" / "id1.jpg").exists()
     assert (tmp_path / "out" / "thumbnails" / "id1.jpg").exists()

@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import html
 import json
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from importlib import resources
+from string import Template
 from pathlib import Path
 
 from PIL import Image, ImageOps
 
 from .catalog import Catalog
 from .models import Photo
-from .search import search as run_search
 from .embeddings import EmbeddingBackend
+from .search import search as run_search
 
 SCHEMA = "kiokufux.gallery.v1"
 
@@ -153,18 +156,20 @@ def export_gallery(
         })
     doc = build_gallery_document(title, items, {"query": query, "tags": tags or [], "selected": len(photos), "skipped": skipped})
     (output / "gallery.json").write_text(json.dumps(doc, indent=2, sort_keys=True), encoding="utf-8")
-    (output / "index.html").write_text(_index_html(title, min_tag_count, max_cloud_tags), encoding="utf-8")
+    _write_gallery_template_files(output, title, min_tag_count, max_cloud_tags)
     return GalleryExportResult(len(photos), len(items), skipped, output)
 
 
-def _index_html(title: str, min_tag_count: int, max_cloud_tags: int) -> str:
-    config = json.dumps({"minTagCount": min_tag_count, "maxCloudTags": max_cloud_tags})
-    return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><style>
-body{{font-family:system-ui,sans-serif;margin:0;background:#111;color:#eee}}header{{position:sticky;top:0;background:#181818;padding:1rem;z-index:1}}input,button{{font:inherit}}.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;padding:1rem}}.card{{background:#222;border:0;color:#eee;text-align:left;padding:0;border-radius:10px;overflow:hidden;cursor:pointer}}.card img{{width:100%;aspect-ratio:1;object-fit:cover;display:block}}.card span{{display:block;padding:.5rem}}.cloud button{{margin:.25rem;border-radius:999px;border:1px solid #555;background:#242424;color:#eee;padding:.25rem .55rem}}.active{{outline:2px solid #8fd}}#empty{{padding:2rem;color:#bbb}}dialog{{max-width:min(96vw,1100px);background:#181818;color:#eee;border:1px solid #555;border-radius:12px}}dialog img{{max-width:90vw;max-height:70vh}}.meta{{color:#ccc}}a{{color:#8fd}}</style></head><body><header><h1>{title}</h1><input id="q" type="search" placeholder="Search filename, caption, description, tags" aria-label="Search metadata"> <button id="clear">Clear</button><p id="state"></p><div id="cloud" class="cloud" aria-label="Tag cloud"></div></header><main><div id="grid" class="grid"></div><p id="empty" hidden>No matching photos. Clear the search or selected tag.</p></main><dialog id="box"><button id="close">Close (Esc)</button> <button id="prev">Previous</button> <button id="next">Next</button><figure><img id="full" alt=""><figcaption id="cap"></figcaption></figure><p id="detail" class="meta"></p></dialog><script>const CFG={config};let data,all=[],shown=[],tag='',idx=0;const q=document.querySelector('#q'),grid=document.querySelector('#grid'),state=document.querySelector('#state'),cloud=document.querySelector('#cloud'),empty=document.querySelector('#empty'),box=document.querySelector('#box');
-function text(i){{return [i.filename,i.relative_path,i.caption,i.description,...(i.tags||[])].join(' ').toLowerCase().replace(/\\s+/g,' ')}}
-function apply(){{const query=q.value.trim().toLowerCase().replace(/\\s+/g,' ');shown=all.filter(i=>(!tag||i.tags.includes(tag))&&(!query||text(i).includes(query)));state.textContent=`${{shown.length}} of ${{all.length}} photos${{query?` · search: "${{query}}"`:''}}${{tag?` · tag: ${{tag}}`:''}}`;empty.hidden=shown.length!==0;grid.innerHTML='';shown.forEach((i,n)=>{{let b=document.createElement('button');b.className='card';b.innerHTML=`<img loading="lazy" src="${{i.thumbnail_path}}" alt="${{alt(i)}}"><span>${{i.caption||i.filename}}</span>`;b.onclick=()=>openBox(n);grid.appendChild(b)}})}}
-function alt(i){{return i.caption||i.description||i.filename}}
-function tagCloud(){{let ents=Object.entries(data.tag_frequencies).filter(e=>e[1]>=CFG.minTagCount).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])).slice(0,CFG.maxCloudTags);let max=Math.max(1,...ents.map(e=>e[1]));ents.forEach(([t,c])=>{{let b=document.createElement('button');b.textContent=`${{t}} · ${{c}}`;b.style.fontSize=(.9+Math.log(c+1)/Math.log(max+1)*.9)+'rem';b.onclick=()=>{{tag=tag===t?'':t;[...cloud.children].forEach(x=>x.classList.toggle('active',x===b&&tag));apply()}};cloud.appendChild(b)}})}}
-function openBox(n){{idx=n;let i=shown[idx];document.querySelector('#full').src=i.image_path;document.querySelector('#full').alt=alt(i);document.querySelector('#cap').textContent=i.caption||i.filename;document.querySelector('#detail').textContent=[i.description,(i.tags||[]).join(', '),i.datetime_original].filter(Boolean).join(' · ');box.showModal()}}
-function move(d){{if(!shown.length)return;openBox((idx+d+shown.length)%shown.length)}}
-document.querySelector('#clear').onclick=()=>{{q.value='';tag='';[...cloud.children].forEach(x=>x.classList.remove('active'));apply()}};document.querySelector('#close').onclick=()=>box.close();document.querySelector('#prev').onclick=()=>move(-1);document.querySelector('#next').onclick=()=>move(1);document.addEventListener('keydown',e=>{{if(box.open&&e.key==='ArrowLeft')move(-1);if(box.open&&e.key==='ArrowRight')move(1)}});q.oninput=apply;fetch('gallery.json').then(r=>r.json()).then(j=>{{data=j;all=j.items;tagCloud();apply()}});</script></body></html>'''
+
+def _template_root():
+    return resources.files("kiokufux").joinpath("templates", "gallery")
+
+
+def _write_gallery_template_files(output: Path, title: str, min_tag_count: int, max_cloud_tags: int) -> None:
+    template_root = _template_root()
+    config_json = json.dumps({"minTagCount": min_tag_count, "maxCloudTags": max_cloud_tags})
+    index_template = Template(template_root.joinpath("index.html").read_text(encoding="utf-8"))
+    rendered = index_template.safe_substitute(title=html.escape(title), config_json=config_json)
+    (output / "index.html").write_text(rendered, encoding="utf-8")
+    for asset_name in ("style.css", "gallery.js"):
+        (output / asset_name).write_text(template_root.joinpath(asset_name).read_text(encoding="utf-8"), encoding="utf-8")

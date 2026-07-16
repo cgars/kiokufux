@@ -17,6 +17,7 @@ from .embeddings import EmbeddingBackend
 from .search import search as run_search
 
 SCHEMA = "kiokufux.gallery.v1"
+EXPORT_FORMAT = "kiokufux-gallery-inline-v1"
 
 
 @dataclass(slots=True)
@@ -112,7 +113,7 @@ def export_gallery(
     backend: EmbeddingBackend | None = None,
 ) -> GalleryExportResult:
     if output.exists():
-        if not overwrite:
+        if not overwrite and not _is_legacy_gallery_export(output):
             raise FileExistsError(f"Output directory already exists: {output}")
         shutil.rmtree(output)
     output.mkdir(parents=True)
@@ -165,6 +166,19 @@ def _template_root():
     return resources.files("kiokufux").joinpath("templates", "gallery")
 
 
+def _is_legacy_gallery_export(output: Path) -> bool:
+    """Recognize and replace exports whose file:// JSON fetch cannot work."""
+    index = output / "index.html"
+    manifest = output / "gallery.json"
+    if not index.is_file() or not manifest.is_file():
+        return False
+    try:
+        html_text = index.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return 'fetch("gallery.json")' in html_text or '<script src="gallery.js"></script>' in html_text
+
+
 def _write_gallery_template_files(
     output: Path,
     title: str,
@@ -187,6 +201,7 @@ def _write_gallery_template_files(
     index_template = Template(template_root.joinpath("index.html").read_text(encoding="utf-8"))
     rendered = index_template.safe_substitute(
         title=html.escape(title),
+        export_format=EXPORT_FORMAT,
         config_json=config_json,
         gallery_json=gallery_json,
         style_css=style_css,

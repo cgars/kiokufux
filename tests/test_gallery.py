@@ -3,7 +3,7 @@ import json
 from PIL import Image
 
 from kiokufux.catalog import Catalog
-from kiokufux.gallery import SCHEMA, build_gallery_document, export_gallery, published_tags
+from kiokufux.gallery import EXPORT_FORMAT, SCHEMA, build_gallery_document, export_gallery, published_tags
 from kiokufux.models import Photo
 from kiokufux.vlm import ImageAnalysis
 
@@ -58,6 +58,7 @@ def test_export_gallery_writes_portable_files_and_filters_by_tag(tmp_path):
     index = (tmp_path / "out" / "index.html").read_text()
     script = (tmp_path / "out" / "gallery.js").read_text()
     assert 'id="gallery-data" type="application/json"' in index
+    assert f'<meta name="generator" content="{EXPORT_FORMAT}">' in index
     assert '"caption": "Sunny beach"' in index
     assert '<link rel="stylesheet" href="style.css">' not in index
     assert '<script src="gallery.js"></script>' not in index
@@ -83,3 +84,18 @@ def test_export_gallery_safely_embeds_markup_in_metadata(tmp_path):
     index = (tmp_path / "out" / "index.html").read_text()
     assert "</script><script>alert(1)</script>" not in index
     assert r"\u003c/script>\u003cscript>alert(1)\u003c/script>" in index
+
+
+def test_export_gallery_replaces_legacy_file_url_export_without_overwrite(tmp_path):
+    db = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite"); db.init_schema()
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / "index.html").write_text('<script src="gallery.js"></script>')
+    (output / "gallery.json").write_text("{}")
+    (output / "gallery.js").write_text('fetch("gallery.json")')
+
+    export_gallery(db, output)
+
+    index = (output / "index.html").read_text()
+    assert f'<meta name="generator" content="{EXPORT_FORMAT}">' in index
+    assert "fetch(" not in index

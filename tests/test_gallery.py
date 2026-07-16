@@ -54,3 +54,28 @@ def test_export_gallery_writes_portable_files_and_filters_by_tag(tmp_path):
     assert (tmp_path / "out" / "gallery.js").exists()
     assert (tmp_path / "out" / "images" / "id1.jpg").exists()
     assert (tmp_path / "out" / "thumbnails" / "id1.jpg").exists()
+
+    index = (tmp_path / "out" / "index.html").read_text()
+    script = (tmp_path / "out" / "gallery.js").read_text()
+    assert 'id="gallery-data" type="application/json"' in index
+    assert '"caption": "Sunny beach"' in index
+    assert "fetch(" not in script
+
+
+def test_export_gallery_safely_embeds_markup_in_metadata(tmp_path):
+    db = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite"); db.init_schema()
+    image = tmp_path / "x.jpg"; _image(image)
+    db.upsert_photo(Photo("id", image, "x.jpg", "hash"))
+    db.upsert_image_analysis(ImageAnalysis(
+        photo_id="id",
+        source="test",
+        model_name="m",
+        model_version="v",
+        caption="</script><script>alert(1)</script>",
+    ))
+
+    export_gallery(db, tmp_path / "out")
+
+    index = (tmp_path / "out" / "index.html").read_text()
+    assert "</script><script>alert(1)</script>" not in index
+    assert r"\u003c/script>\u003cscript>alert(1)\u003c/script>" in index

@@ -6,8 +6,8 @@ import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib import resources
-from string import Template
 from pathlib import Path
+from string import Template
 
 from PIL import Image, ImageOps
 
@@ -156,7 +156,7 @@ def export_gallery(
         })
     doc = build_gallery_document(title, items, {"query": query, "tags": tags or [], "selected": len(photos), "skipped": skipped})
     (output / "gallery.json").write_text(json.dumps(doc, indent=2, sort_keys=True), encoding="utf-8")
-    _write_gallery_template_files(output, title, min_tag_count, max_cloud_tags)
+    _write_gallery_template_files(output, title, min_tag_count, max_cloud_tags, doc)
     return GalleryExportResult(len(photos), len(items), skipped, output)
 
 
@@ -165,11 +165,25 @@ def _template_root():
     return resources.files("kiokufux").joinpath("templates", "gallery")
 
 
-def _write_gallery_template_files(output: Path, title: str, min_tag_count: int, max_cloud_tags: int) -> None:
+def _write_gallery_template_files(
+    output: Path,
+    title: str,
+    min_tag_count: int,
+    max_cloud_tags: int,
+    document: dict,
+) -> None:
     template_root = _template_root()
     config_json = json.dumps({"minTagCount": min_tag_count, "maxCloudTags": max_cloud_tags})
+    # Embed the data so opening index.html directly from disk does not require a
+    # fetch(), which browsers block for file:// URLs. Escaping '<' prevents data
+    # containing a closing script tag from ending this JSON script element.
+    gallery_json = json.dumps(document, sort_keys=True).replace("<", "\\u003c")
     index_template = Template(template_root.joinpath("index.html").read_text(encoding="utf-8"))
-    rendered = index_template.safe_substitute(title=html.escape(title), config_json=config_json)
+    rendered = index_template.safe_substitute(
+        title=html.escape(title),
+        config_json=config_json,
+        gallery_json=gallery_json,
+    )
     (output / "index.html").write_text(rendered, encoding="utf-8")
     for asset_name in ("style.css", "gallery.js"):
         (output / asset_name).write_text(template_root.joinpath(asset_name).read_text(encoding="utf-8"), encoding="utf-8")

@@ -107,11 +107,7 @@ document.addEventListener("keydown", (event) => {
 });
 queryInput.addEventListener("input", applyFilters);
 
-fetch("gallery.json")
-  .then((response) => response.json())
-  .then((json) => {
-    data = json;
-    all = json.items;
-    buildTagCloud();
-    applyFilters();
-  });
+data = JSON.parse(document.querySelector("#gallery-data").textContent);
+all = data.items;
+buildTagCloud();
+applyFilters();

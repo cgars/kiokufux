@@ -31,6 +31,21 @@ pip install -e '.[clip]'
 
 If OpenCLIP is unavailable, KiokuFux falls back to a dependency-light local embedding backend so the MVP remains runnable offline.
 
+For local recurring-face discovery, install the optional inference stack. The first
+run may download the explicitly selected facenet-pytorch VGGFace2 weights; subsequent
+processing is offline:
+
+```bash
+pip install -e '.[faces]'
+kiokufux faces scan ./photos
+kiokufux faces cluster ./photos
+kiokufux faces review ./photos
+```
+
+Face groups are anonymous algorithmic suggestions. KiokuFux never assigns names or
+creates people automatically: only a reviewed group explicitly confirmed by a user
+becomes a stable, collection-local person, and its display name remains optional.
+
 ## CLI usage
 
 ```bash
@@ -68,6 +83,11 @@ kiokufux reject-tag PATH PHOTO_ID TAG
 kiokufux tags PATH [PHOTO_ID]
 kiokufux untag PATH PHOTO_ID "family party"
 kiokufux export-sidecars PATH
+kiokufux faces scan PATH [--device auto|cuda|cpu]
+kiokufux faces cluster PATH
+kiokufux faces review PATH [--port 0] [--no-open]
+kiokufux faces reset-derived PATH
+kiokufux faces remove-all PATH --yes
 ```
 
 ## Example workflow
@@ -107,7 +127,29 @@ The workspace is created at `./photos/.kiokufux/`:
   embeddings/
   indexes/
   logs/
+  faces.sqlite
+  face-review.json
+  people.json
+  cache/face-thumbnails/
 ```
+
+## Face-data privacy and recovery
+
+Face detection, 512-dimensional embeddings, anonymous clustering, review, and person
+metadata stay inside the collection workspace. Face embeddings are biometric-derived
+data: protect and back up `.kiokufux/` with the same care as the photographs. The
+review server refuses non-loopback hosts by default and does not perform cloud lookup,
+telemetry, demographic inference, or automatic identification. Source photographs
+are opened read-only and are never cropped or rewritten by the face workflow.
+
+`faces reset-derived` deletes the rebuildable SQLite index and face-thumbnail cache
+but preserves `people.json` and `face-review.json`. `faces remove-all --yes` deletes
+both derived and human-authored face data without deleting photographs. Model and
+preprocessing identifiers are stored beside every compact float32 embedding, and
+incompatible versions are clustered separately. The default backend uses
+facenet-pytorch (MIT-licensed code) with its `vggface2` pretrained InceptionResnetV1;
+review the upstream weights terms and VGGFace2 training-data provenance for your use
+before installation. KiokuFux does not bundle those weights or use InsightFace models.
 
 ## Configuration
 

@@ -293,6 +293,21 @@ def _build_parser() -> argparse.ArgumentParser:
     s.add_argument("--min-raw-score", type=float, help="Minimum raw similarity required for confident matches")
     s.add_argument("--min-robust-z", type=float, help="Minimum robust z-score required for confident matches")
     _add_embedding_options(s)
+    faces = sub.add_parser("faces", help="Discover and review recurring faces locally")
+    face_commands = faces.add_subparsers(dest="faces_cmd", required=True)
+    face_scan = face_commands.add_parser("scan")
+    face_scan.add_argument("path", type=Path)
+    face_scan.add_argument("--device", choices=["auto","cuda","cpu"])
+    face_cluster = face_commands.add_parser("cluster")
+    face_cluster.add_argument("path", type=Path)
+    face_review = face_commands.add_parser("review")
+    face_review.add_argument("path", type=Path)
+    face_review.add_argument("--host", default="127.0.0.1")
+    face_review.add_argument("--port", type=int, default=0)
+    face_review.add_argument("--no-open", action="store_true")
+    for action in ("reset-derived", "remove-all"):
+        cleanup = face_commands.add_parser(action); cleanup.add_argument("path",type=Path)
+        if action == "remove-all": cleanup.add_argument("--yes",action="store_true",help="Confirm removal of all face data")
     return parser
 
 
@@ -452,6 +467,27 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Initialized KiokuFux workspace at {ws}")
         print(f"Configuration file: {config_file}")
         return 0
+
+    if args.cmd == "faces":
+        from .faces import FaceStore, FacenetBackend, cluster_faces, remove_all, reset_derived, scan_faces
+        if args.faces_cmd == "scan":
+            backend=FacenetBackend(args.device or config.faces.device)
+            print(f"Face backend: {backend.backend_id}/{backend.model_id}; device={backend.device}",file=sys.stderr)
+            with FaceStore(ws) as store:
+                stats=scan_faces(root,store,backend,working_resolution=config.faces.working_resolution,
+                    confidence_threshold=config.faces.detection_confidence,minimum_face_size=config.faces.minimum_face_size)
+            print("Face scan complete: "+", ".join(f"{k}={v}" for k,v in stats.items())); return 0
+        if args.faces_cmd == "cluster":
+            with FaceStore(ws) as store: stats=cluster_faces(store,min_cluster_size=config.faces.min_cluster_size,min_samples=config.faces.min_samples)
+            print(f"Face clustering complete: groups={stats['groups']}, ungrouped={stats['ungrouped']}"); return 0
+        if args.faces_cmd == "review":
+            from .face_review import serve_review
+            serve_review(root,ws,args.host,args.port,not args.no_open); return 0
+        if args.faces_cmd == "reset-derived":
+            reset_derived(ws); print("Removed derived face data; people and review decisions were preserved."); return 0
+        if args.faces_cmd == "remove-all":
+            if not args.yes: parser.error("faces remove-all requires --yes")
+            remove_all(ws); print("Removed all face data. Source photographs were not changed."); return 0
 
     cat = Catalog(catalog_path(root))
     cat.init_schema()

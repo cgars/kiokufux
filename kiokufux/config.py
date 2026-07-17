@@ -47,6 +47,17 @@ class SearchConfig:
 class LoggingConfig:
     verbose: int = 0
 
+@dataclass(slots=True)
+class FacesConfig:
+    device: str = "auto"
+    backend: str = "facenet-pytorch"
+    detection_confidence: float = 0.95
+    minimum_face_size: int = 40
+    working_resolution: int = 1600
+    min_cluster_size: int = 2
+    min_samples: int = 2
+    thumbnail_size: int = 256
+
 
 @dataclass(slots=True)
 class KiokuFuxConfig:
@@ -56,6 +67,7 @@ class KiokuFuxConfig:
     search: SearchConfig = field(default_factory=SearchConfig)
     autotagging: AutoTaggingConfig = field(default_factory=AutoTaggingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    faces: FacesConfig = field(default_factory=FacesConfig)
 
 
 def workspace_for(root: Path, output_dir: Path | None = None, config: KiokuFuxConfig | None = None) -> Path:
@@ -106,6 +118,16 @@ min_score = 0.20
 
 [logging]
 verbose = 0
+
+[faces]
+device = "auto" # auto, cuda, or cpu
+backend = "facenet-pytorch"
+detection_confidence = 0.95
+minimum_face_size = 40
+working_resolution = 1600
+min_cluster_size = 2
+min_samples = 2
+thumbnail_size = 256
 """
 
 
@@ -133,6 +155,7 @@ def config_from_mapping(data: dict[str, Any]) -> KiokuFuxConfig:
     search = data.get("search", {})
     autotagging = data.get("autotagging", {})
     logging = data.get("logging", {})
+    faces = data.get("faces", {})
     if "directory" in workspace:
         cfg.workspace.directory = str(workspace["directory"])
     if "max_size" in thumbnails:
@@ -161,6 +184,10 @@ def config_from_mapping(data: dict[str, Any]) -> KiokuFuxConfig:
         cfg.autotagging.min_score = float(autotagging["min_score"])
     if "verbose" in logging:
         cfg.logging.verbose = int(logging["verbose"])
+    for name, converter in (("device",str),("backend",str),("detection_confidence",float),
+        ("minimum_face_size",int),("working_resolution",int),("min_cluster_size",int),
+        ("min_samples",int),("thumbnail_size",int)):
+        if name in faces: setattr(cfg.faces, name, converter(faces[name]))
     return cfg
 
 

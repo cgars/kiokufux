@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import json
-import mimetypes
+import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
-
-from PIL import Image, ImageOps
+from urllib.parse import urlparse
 
 from .faces import FaceStore, ReviewState
 
@@ -23,8 +21,19 @@ def safe_collection_path(root: Path, candidate: str) -> Path:
 
 def make_server(root:Path, workspace:Path, host:str="127.0.0.1", port:int=0):
     if host not in {"127.0.0.1","::1","localhost"}: raise ValueError("face review may only bind to loopback")
-    store=FaceStore(workspace); state=ReviewState(workspace)
+    # Initialize the schema before accepting requests. Each handler opens its own
+    # SQLite connection because ThreadingHTTPServer runs handlers in worker threads.
+    with FaceStore(workspace):
+        pass
+    state=ReviewState(workspace)
+    state_lock=threading.RLock()
     class Handler(BaseHTTPRequestHandler):
+        def handle(self):
+            # ReviewState contains two coordinated JSON documents. Serialize requests
+            # so concurrent mutations cannot overwrite one another between atomic writes.
+            with state_lock:
+                super().handle()
+
         def send_json(self,value,status=200):
             data=json.dumps(value).encode(); self.send_response(status); self.send_header("Content-Type","application/json"); self.send_header("Content-Length",str(len(data))); self.end_headers(); self.wfile.write(data)
         def do_GET(self):
@@ -32,10 +41,14 @@ def make_server(root:Path, workspace:Path, host:str="127.0.0.1", port:int=0):
             if route=="/":
                 data=HTML.encode(); self.send_response(200); self.send_header("Content-Type","text/html; charset=utf-8"); self.end_headers(); self.wfile.write(data); return
             if route=="/api/status": return self.send_json({"collection_id":state.review["collection_id"],"local_only":True})
-            if route=="/api/groups": return self.send_json(store.groups())
+            if route=="/api/groups":
+                with FaceStore(workspace) as store:
+                    return self.send_json(store.groups())
             parts=route.strip('/').split('/')
             if len(parts)==4 and parts[:2]==["api","faces"] and parts[3]=="thumbnail":
-                face_id=parts[2]; row=store.db.execute("SELECT face_id FROM face_occurrences WHERE face_id=?",(face_id,)).fetchone()
+                face_id=parts[2]
+                with FaceStore(workspace) as store:
+                    row=store.db.execute("SELECT face_id FROM face_occurrences WHERE face_id=?",(face_id,)).fetchone()
                 if not row:return self.send_json({"error":"not found"},404)
                 path=workspace/"cache"/"face-thumbnails"/f"{face_id}.jpg"
                 if not path.exists():return self.send_json({"error":"not found"},404)
@@ -54,10 +67,11 @@ def make_server(root:Path, workspace:Path, host:str="127.0.0.1", port:int=0):
             if self.path in actions:
                 face_ids=body.get("face_ids",[])
                 if not isinstance(face_ids,list) or not all(isinstance(x,str) for x in face_ids):return self.send_json({"error":"face_ids must be a list of strings"},400)
-                known={r[0] for r in store.db.execute("SELECT face_id FROM face_occurrences")}
-                if not set(face_ids)<=known:return self.send_json({"error":"unknown face_id"},404)
-                if actions[self.path]=="exclude-from-clustering" and face_ids:
-                    store.db.executemany("UPDATE face_occurrences SET excluded=1 WHERE face_id=?",[(x,) for x in face_ids]);store.db.commit()
+                with FaceStore(workspace) as store:
+                    known={r[0] for r in store.db.execute("SELECT face_id FROM face_occurrences")}
+                    if not set(face_ids)<=known:return self.send_json({"error":"unknown face_id"},404)
+                    if actions[self.path]=="exclude-from-clustering" and face_ids:
+                        store.db.executemany("UPDATE face_occurrences SET excluded=1 WHERE face_id=?",[(x,) for x in face_ids]);store.db.commit()
                 return self.send_json(state.record_action(actions[self.path],face_ids,group_id=body.get("group_id")))
             if self.path=="/api/review/undo": return self.send_json(state.undo())
             return self.send_json({"error":"not found"},404)
@@ -72,8 +86,7 @@ def make_server(root:Path, workspace:Path, host:str="127.0.0.1", port:int=0):
                 except KeyError:return self.send_json({"error":"person not found"},404)
             return self.send_json({"error":"not found"},404)
         def log_message(self,*_): pass
-    server=ThreadingHTTPServer((host,port),Handler); server.face_store=store
-    return server
+    return ThreadingHTTPServer((host,port),Handler)
 
 def serve_review(root:Path, workspace:Path, host="127.0.0.1",port=0,open_browser=True):
     server=make_server(root,workspace,host,port); actual=server.server_address[1]; url=f"http://{host}:{actual}/"
@@ -81,4 +94,4 @@ def serve_review(root:Path, workspace:Path, host="127.0.0.1",port=0,open_browser
     if open_browser:webbrowser.open(url)
     try:server.serve_forever()
     except KeyboardInterrupt:pass
-    finally:server.shutdown(); server.server_close(); server.face_store.close()
+    finally:server.shutdown(); server.server_close()

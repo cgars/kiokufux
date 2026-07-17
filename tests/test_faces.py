@@ -1,10 +1,12 @@
 import json
+import threading
+import urllib.request
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
 
-from kiokufux.face_review import safe_collection_path
+from kiokufux.face_review import make_server, safe_collection_path
 from kiokufux.faces import (FaceDetection, FaceStore, ReviewState, boxes_iou,
     cluster_faces, normalize_embeddings, scan_faces)
 
@@ -66,3 +68,27 @@ def test_path_traversal_and_iou(tmp_path):
     else:
         raise AssertionError("traversal accepted")
     assert boxes_iou((0, 0, 1, 1), (0, 0, 1, 1)) == 1
+
+
+def test_threaded_review_server_uses_request_local_sqlite_connections(tmp_path):
+    server = make_server(tmp_path, tmp_path / ".kiokufux")
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}/api/groups"
+        responses = []
+
+        def fetch_groups():
+            with urllib.request.urlopen(url, timeout=2) as response:
+                responses.append(json.load(response))
+
+        clients = [threading.Thread(target=fetch_groups) for _ in range(4)]
+        for client in clients:
+            client.start()
+        for client in clients:
+            client.join()
+        assert responses == [[], [], [], []]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()

@@ -211,3 +211,17 @@ This is useful for fixing incorrectly oriented scans, but it is intentionally ex
 - MVP 2: stronger local model setup, optional approximate vector indexes, and real local VLM backends for richer auto-tags/captions.
 - MVP 3: review workflows and safer bulk-edit tooling using sidecars only.
 - MVP 4: optional desktop UI for browsing, search, and curation.
+
+## Static HTML gallery export
+
+`kiokufux export-gallery PATH OUTPUT` creates a standalone, offline-friendly gallery in `OUTPUT` with `index.html`, `gallery.json`, static CSS/JavaScript assets, copied images, and thumbnails. Open `index.html` directly in a browser; its data, CSS, and JavaScript are embedded, so no local web server is required. The gallery searches filenames, relative paths, VLM captions/descriptions, manual tags, and accepted automatic tags in the browser, and includes a frequency-weighted tag cloud for published tags. Exports from the earlier `fetch("gallery.json")` implementation are detected and replaced automatically; use `--overwrite` to regenerate any other existing export.
+
+Examples:
+
+```bash
+kiokufux export-gallery ./photos ./gallery-export --title "Family Archive"
+kiokufux export-gallery ./photos ./gallery-export --query "beach" --top-k 25 --overwrite
+kiokufux export-gallery ./photos ./gallery-export --tag beach --tag family
+```
+
+Pending or rejected tag proposals are not included. Use `--min-tag-count` and `--max-cloud-tags` to tune the default cloud, and `--image-max-size` to export downscaled image derivatives instead of original-size copies.

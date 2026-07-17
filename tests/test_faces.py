@@ -113,9 +113,14 @@ def test_review_api_exposes_group_detail_and_source_context(tmp_path):
         with urllib.request.urlopen(base + f"/api/images/{group['faces'][0]['image_id']}/thumbnail") as response:
             assert response.headers["Content-Type"] == "image/jpeg"
             assert response.read().startswith(b"\xff\xd8")
+        with urllib.request.urlopen(base + f"/api/images/{group['faces'][0]['image_id']}/faces") as response:
+            detections = json.load(response)
+        assert detections[0]["face_id"] == group["faces"][0]["face_id"]
+        assert all(0 <= detections[0][key] <= 1 for key in ("x1", "y1", "x2", "y2"))
         with urllib.request.urlopen(base + "/") as response:
             page = response.read().decode()
-        assert "View photograph" in page
+        assert "View in photograph" in page
+        assert "All detected faces are marked" in page
         assert "Split selected" in page
         assert "Confirm as person" in page
     finally:

@@ -8,7 +8,7 @@ from PIL import Image
 
 from kiokufux.face_review import make_server, safe_collection_path
 from kiokufux.faces import (FaceDetection, FaceStore, ReviewState, boxes_iou,
-    cluster_faces, normalize_embeddings, scan_faces)
+    cluster_faces, friendly_group_name, normalize_embeddings, scan_faces)
 
 
 class FakeBackend:
@@ -33,6 +33,13 @@ def test_normalization_and_zero_rejection():
         pass
     else:
         raise AssertionError("zero embedding accepted")
+
+
+def test_friendly_group_names_are_stable_and_non_identifying():
+    name = friendly_group_name("49bb24b6-b709-4c5c-b107-19257ce9e02f")
+    assert name == friendly_group_name("49bb24b6-b709-4c5c-b107-19257ce9e02f")
+    assert name.count("_") == 1
+    assert "49bb" not in name
 
 
 def test_scan_is_idempotent_and_cluster_is_anonymous(tmp_path):
@@ -120,7 +127,10 @@ def test_review_api_exposes_group_detail_and_source_context(tmp_path):
         with urllib.request.urlopen(base + "/") as response:
             page = response.read().decode()
         assert "View in photograph" in page
-        assert "All detected faces are marked" in page
+        assert "Compare selected" in page
+        assert "Marked photograph" in page
+        assert "_" in group["friendly_id"]
+        assert "g.friendly_id" in page
         assert "Split selected" in page
         assert "Confirm as person" in page
     finally:

@@ -22,6 +22,17 @@ from PIL import Image, ImageOps
 
 from .config import SUPPORTED_EXTENSIONS, WORKSPACE_NAME
 
+_GROUP_ADJECTIVES = ("amber", "brave", "bright", "calm", "clever", "dancing", "gentle", "golden",
+                     "happy", "hidden", "kind", "lively", "lucky", "misty", "quiet", "running")
+_GROUP_ANIMALS = ("badger", "bear", "deer", "dolphin", "eagle", "falcon", "fox", "hare",
+                  "heron", "lynx", "otter", "owl", "panda", "raven", "tiger", "wolf")
+
+
+def friendly_group_name(group_id: str) -> str:
+    """Return a deterministic, non-identifying label for a provisional group."""
+    digest = hashlib.sha256(group_id.encode("utf-8")).digest()
+    return f"{_GROUP_ADJECTIVES[digest[0] % len(_GROUP_ADJECTIVES)]}_{_GROUP_ANIMALS[digest[1] % len(_GROUP_ANIMALS)]}"
+
 
 @dataclass(frozen=True, slots=True)
 class FaceDetection:
@@ -110,7 +121,7 @@ class FaceStore:
           COUNT(DISTINCT f.image_id) photo_count FROM face_groups g
           JOIN face_group_members m USING(group_id) JOIN face_occurrences f USING(face_id)
           GROUP BY g.group_id ORDER BY face_count DESC""").fetchall()
-        return [dict(row) for row in rows]
+        return [{**dict(row), "friendly_id": friendly_group_name(row["group_id"])} for row in rows]
 
     def group(self, group_id: str) -> dict[str, Any] | None:
         group = self.db.execute("SELECT * FROM face_groups WHERE group_id=?", (group_id,)).fetchone()
@@ -120,6 +131,7 @@ class FaceStore:
           f.x1,f.y1,f.x2,f.y2 FROM face_group_members m
           JOIN face_occurrences f USING(face_id) WHERE m.group_id=? ORDER BY f.face_id""", (group_id,)).fetchall()
         result = dict(group)
+        result["friendly_id"] = friendly_group_name(group_id)
         result["faces"] = [dict(face) for face in faces]
         return result
 

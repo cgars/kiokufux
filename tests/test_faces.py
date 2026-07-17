@@ -129,6 +129,9 @@ def test_review_api_exposes_group_detail_and_source_context(tmp_path):
         assert "View in photograph" in page
         assert "Compare selected" in page
         assert "Marked photograph" in page
+        assert "Zoom in" in page
+        assert "zoom-viewport" in page
+        assert "wheelZoom" in page
         assert "_" in group["friendly_id"]
         assert "g.friendly_id" in page
         assert "Split selected" in page

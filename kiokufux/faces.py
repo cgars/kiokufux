@@ -112,6 +112,23 @@ class FaceStore:
           GROUP BY g.group_id ORDER BY face_count DESC""").fetchall()
         return [dict(row) for row in rows]
 
+    def group(self, group_id: str) -> dict[str, Any] | None:
+        group = self.db.execute("SELECT * FROM face_groups WHERE group_id=?", (group_id,)).fetchone()
+        if group is None:
+            return None
+        faces = self.db.execute("""SELECT f.face_id,f.image_id,f.confidence,f.quality,
+          f.x1,f.y1,f.x2,f.y2 FROM face_group_members m
+          JOIN face_occurrences f USING(face_id) WHERE m.group_id=? ORDER BY f.face_id""", (group_id,)).fetchall()
+        result = dict(group)
+        result["faces"] = [dict(face) for face in faces]
+        return result
+
+    def ungrouped(self) -> list[dict[str, Any]]:
+        rows = self.db.execute("""SELECT f.face_id,f.image_id,f.confidence,f.quality
+          FROM face_occurrences f LEFT JOIN face_group_members m USING(face_id)
+          WHERE m.face_id IS NULL AND f.excluded=0 ORDER BY f.face_id""").fetchall()
+        return [dict(row) for row in rows]
+
 
 def _fingerprint(path: Path) -> str:
     h = hashlib.sha256()

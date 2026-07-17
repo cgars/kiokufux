@@ -92,3 +92,33 @@ def test_threaded_review_server_uses_request_local_sqlite_connections(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def test_review_api_exposes_group_detail_and_source_context(tmp_path):
+    Image.new("RGB", (100, 100), "red").save(tmp_path / "one.jpg")
+    Image.new("RGB", (100, 100), "blue").save(tmp_path / "two.jpg")
+    workspace = tmp_path / ".kiokufux"
+    with FaceStore(workspace) as store:
+        scan_faces(tmp_path, store, FakeBackend(), minimum_face_size=1)
+        cluster_faces(store)
+        group_id = store.groups()[0]["group_id"]
+    server = make_server(tmp_path, workspace)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        with urllib.request.urlopen(base + f"/api/groups/{group_id}") as response:
+            group = json.load(response)
+        assert len(group["faces"]) == 2
+        with urllib.request.urlopen(base + f"/api/images/{group['faces'][0]['image_id']}/thumbnail") as response:
+            assert response.headers["Content-Type"] == "image/jpeg"
+            assert response.read().startswith(b"\xff\xd8")
+        with urllib.request.urlopen(base + "/") as response:
+            page = response.read().decode()
+        assert "View photograph" in page
+        assert "Split selected" in page
+        assert "Confirm as person" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()

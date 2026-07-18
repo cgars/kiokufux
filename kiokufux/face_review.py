@@ -123,7 +123,8 @@ def make_server(root: Path, workspace: Path, host: str = "127.0.0.1", port: int 
                     row = store.db.execute("SELECT image_path FROM face_occurrences WHERE image_id=? LIMIT 1", (parts[2],)).fetchone()
                     if not row:
                         return self.send_json({"error": "image not found"}, 404)
-                    path = Path(row["image_path"]).resolve()
+                    stored_path = Path(row["image_path"])
+                    path = (root / stored_path).resolve() if not stored_path.is_absolute() else stored_path.resolve()
                     if not path.is_relative_to(root.resolve()):
                         return self.send_json({"error": "image outside collection"}, 403)
                     try:
@@ -166,7 +167,11 @@ def make_server(root: Path, workspace: Path, host: str = "127.0.0.1", port: int 
                         return self.send_json({"error": "group not found"}, 404)
                     if group["review_state"] != "reviewed" or group["conflict"]:
                         return self.send_json({"error": "group must be reviewed and conflict-free"}, 409)
-                    return self.send_json(state.create_person([f["face_id"] for f in group["faces"]], body.get("display_name")), 201)
+                    try:
+                        person = state.create_person([f["face_id"] for f in group["faces"]], body.get("display_name"), group.get("friendly_name") or group.get("friendly_id"))
+                    except ValueError as exc:
+                        return self.send_json({"error": str(exc)}, 409)
+                    return self.send_json(person, 201)
                 if route == "/api/review/merge":
                     source, target = body.get("source_group_id"), body.get("target_group_id")
                     if not source or not target or source == target:

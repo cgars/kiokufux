@@ -531,7 +531,7 @@ def main(argv: list[str] | None = None) -> int:
             for i, r in enumerate(results, 1):
                 print(_format_search_result(i, r, summary=args.summary))
         elif args.cmd == "export-sidecars":
-            exported = export_sidecars(cat)
+            exported = export_sidecars(cat, workspace=ws)
             logger.info("Exported %s sidecars", exported)
             print(f"Exported {exported} sidecars")
         elif args.cmd == "export-gallery":

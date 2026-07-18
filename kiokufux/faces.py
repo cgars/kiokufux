@@ -28,10 +28,19 @@ _GROUP_ANIMALS = ("badger", "bear", "deer", "dolphin", "eagle", "falcon", "fox",
                   "heron", "lynx", "otter", "owl", "panda", "raven", "tiger", "wolf")
 
 
+def _friendly_name_from_seed(seed: str) -> str:
+    digest = hashlib.sha256(seed.encode("utf-8")).digest()
+    return f"{_GROUP_ADJECTIVES[digest[0] % len(_GROUP_ADJECTIVES)]}_{_GROUP_ANIMALS[digest[1] % len(_GROUP_ANIMALS)]}"
+
+
 def friendly_group_name(group_id: str) -> str:
     """Return a deterministic, non-identifying label for a provisional group."""
-    digest = hashlib.sha256(group_id.encode("utf-8")).digest()
-    return f"{_GROUP_ADJECTIVES[digest[0] % len(_GROUP_ADJECTIVES)]}_{_GROUP_ANIMALS[digest[1] % len(_GROUP_ANIMALS)]}"
+    return _friendly_name_from_seed(group_id)
+
+
+def person_friendly_name(person_id: str) -> str:
+    """Return a deterministic, non-identifying migration label for a stable person."""
+    return _friendly_name_from_seed(person_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,10 +118,10 @@ class FaceStore:
           content_fingerprint TEXT NOT NULL, model_key TEXT NOT NULL, scanned_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS cluster_runs(cluster_run_id TEXT PRIMARY KEY, model_key TEXT NOT NULL,
           parameters TEXT NOT NULL, created_at TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS face_groups(group_id TEXT PRIMARY KEY, cluster_run_id TEXT NOT NULL,
-          representative_face_id TEXT NOT NULL, review_state TEXT NOT NULL DEFAULT 'unreviewed', conflict INTEGER NOT NULL DEFAULT 0);
-        CREATE TABLE IF NOT EXISTS face_group_members(group_id TEXT NOT NULL, face_id TEXT NOT NULL,
-          membership_score REAL, PRIMARY KEY(group_id,face_id));
+        CREATE TABLE IF NOT EXISTS face_groups(group_id TEXT PRIMARY KEY, cluster_run_id TEXT NOT NULL REFERENCES cluster_runs(cluster_run_id) ON DELETE CASCADE,
+          representative_face_id TEXT NOT NULL REFERENCES face_occurrences(face_id), review_state TEXT NOT NULL DEFAULT 'unreviewed', conflict INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS face_group_members(group_id TEXT NOT NULL REFERENCES face_groups(group_id) ON DELETE CASCADE, face_id TEXT NOT NULL REFERENCES face_occurrences(face_id) ON DELETE CASCADE,
+          membership_score REAL, PRIMARY KEY(group_id,face_id), UNIQUE(face_id));
         """)
         self.db.commit()
 
@@ -120,8 +129,9 @@ class FaceStore:
         rows = self.db.execute("""SELECT g.*, COUNT(m.face_id) face_count,
           COUNT(DISTINCT f.image_id) photo_count FROM face_groups g
           JOIN face_group_members m USING(group_id) JOIN face_occurrences f USING(face_id)
-          GROUP BY g.group_id ORDER BY face_count DESC""").fetchall()
-        return [{**dict(row), "friendly_id": friendly_group_name(row["group_id"])} for row in rows]
+          WHERE NOT EXISTS (SELECT 1 FROM face_group_members mx WHERE mx.group_id=g.group_id AND mx.face_id IN (SELECT value FROM json_each(?)))
+          GROUP BY g.group_id ORDER BY face_count DESC""", (json.dumps(self._confirmed_face_ids()),)).fetchall()
+        return [{**dict(row), "friendly_id": friendly_group_name(row["group_id"]), "friendly_name": friendly_group_name(row["group_id"])} for row in rows]
 
     def group(self, group_id: str) -> dict[str, Any] | None:
         group = self.db.execute("SELECT * FROM face_groups WHERE group_id=?", (group_id,)).fetchone()
@@ -132,6 +142,7 @@ class FaceStore:
           JOIN face_occurrences f USING(face_id) WHERE m.group_id=? ORDER BY f.face_id""", (group_id,)).fetchall()
         result = dict(group)
         result["friendly_id"] = friendly_group_name(group_id)
+        result["friendly_name"] = friendly_group_name(group_id)
         result["faces"] = [dict(face) for face in faces]
         return result
 
@@ -140,6 +151,17 @@ class FaceStore:
           FROM face_occurrences f LEFT JOIN face_group_members m USING(face_id)
           WHERE m.face_id IS NULL AND f.excluded=0 ORDER BY f.face_id""").fetchall()
         return [dict(row) for row in rows]
+
+
+    def _confirmed_face_ids(self) -> list[str]:
+        data = self.workspace / "face-review.json"
+        if not data.exists():
+            return []
+        try:
+            review = json.loads(data.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        return sorted({face_id for face_ids in (review.get("person_faces") or {}).values() for face_id in face_ids})
 
 
 def _fingerprint(path: Path) -> str:
@@ -181,11 +203,11 @@ def scan_faces(root: Path, store: FaceStore, backend: FaceBackend, *, working_re
                      backend_id,model_id,model_version,preprocessing_version,embedding_dimensions,
                      l2_normalized,embedding,content_fingerprint,scanned_at)
                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (face_id,image_id,str(path.resolve()),*box,json.dumps(landmarks),detection.confidence,detection.quality,
+                    (face_id,image_id,str(path.resolve().relative_to(root.resolve())),*box,json.dumps(landmarks),detection.confidence,detection.quality,
                      backend.backend_id,backend.model_id,backend.model_version,backend.preprocessing_version,
                      backend.embedding_dimensions,1,vector.astype('<f4').tobytes(),fingerprint,now))
                 crop = oriented.crop((box[0]*ow,box[1]*oh,box[2]*ow,box[3]*oh)); crop.thumbnail((256,256)); crop.save(cache/f"{face_id}.jpg", "JPEG")
-            store.db.execute("INSERT OR REPLACE INTO scanned_images VALUES(?,?,?,?,?)", (image_id,str(path.resolve()),fingerprint,key,now))
+            store.db.execute("INSERT OR REPLACE INTO scanned_images VALUES(?,?,?,?,?)", (image_id,str(path.resolve().relative_to(root.resolve())),fingerprint,key,now))
             store.db.commit(); stats["scanned"] += 1; stats["embedded"] += len(usable)
         except Exception:
             store.db.rollback(); stats["failed"] += 1
@@ -193,7 +215,10 @@ def scan_faces(root: Path, store: FaceStore, backend: FaceBackend, *, working_re
 
 
 def cluster_faces(store: FaceStore, *, min_cluster_size: int = 2, min_samples: int = 2) -> dict[str, int]:
+    review = ReviewState.load_existing(store.workspace)
+    blocked = set(review.get("rejected_face_ids", [])) | set(review.get("excluded_face_ids", [])) | {face_id for face_ids in (review.get("person_faces") or {}).values() for face_id in face_ids}
     rows = store.db.execute("SELECT * FROM face_occurrences WHERE excluded=0 ORDER BY face_id").fetchall()
+    rows = [row for row in rows if row["face_id"] not in blocked]
     by_key: dict[tuple[Any,...], list[Any]] = {}
     for row in rows:
         key = tuple(row[k] for k in ("backend_id","model_id","model_version","preprocessing_version","embedding_dimensions"))
@@ -239,21 +264,56 @@ def atomic_write_json(path: Path, value: dict[str, Any]) -> None:
 
 
 class ReviewState:
+    @staticmethod
+    def load_existing(workspace: Path) -> dict[str, Any]:
+        path = workspace / "face-review.json"
+        if not path.exists():
+            return {"schema_version": 2, "actions": [], "rejected_face_ids": [], "excluded_face_ids": [], "person_faces": {}, "face_refs": {}}
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"schema_version": 2, "actions": [], "rejected_face_ids": [], "excluded_face_ids": [], "person_faces": {}, "face_refs": {}}
+
     def __init__(self, workspace: Path):
         self.workspace=workspace; self.review_path=workspace/"face-review.json"; self.people_path=workspace/"people.json"
-        self.review=self._load(self.review_path,{"schema_version":1,"collection_id":str(uuid.uuid4()),"actions":[],"rejected_face_ids":[],"excluded_face_ids":[],"person_faces":{}})
-        self.people=self._load(self.people_path,{"schema_version":1,"people":[]})
+        self.review=self._load(self.review_path,{"schema_version":2,"collection_id":str(uuid.uuid4()),"actions":[],"rejected_face_ids":[],"excluded_face_ids":[],"person_faces":{},"face_refs":{}})
+        self.people=self._load(self.people_path,{"schema_version":2,"people":[]})
+        self._migrate()
         self.save()
     @staticmethod
     def _load(path:Path, default:dict[str,Any])->dict[str,Any]:
         return json.loads(path.read_text()) if path.exists() else default
+    def _migrate(self) -> None:
+        self.review.setdefault("collection_id", str(uuid.uuid4()))
+        self.review.setdefault("actions", [])
+        self.review.setdefault("rejected_face_ids", [])
+        self.review.setdefault("excluded_face_ids", [])
+        self.review.setdefault("person_faces", {})
+        self.review.setdefault("face_refs", {})
+        self.review["schema_version"] = 2
+        self.people.setdefault("people", [])
+        for person in self.people["people"]:
+            person.setdefault("friendly_name", person_friendly_name(person.get("person_id", "")))
+            person.setdefault("display_name", None)
+        self.people["schema_version"] = 2
+
     def save(self): atomic_write_json(self.review_path,self.review); atomic_write_json(self.people_path,self.people)
-    def create_person(self, face_ids: Sequence[str], display_name: str|None=None)->dict[str,Any]:
-        person={"person_id":str(uuid.uuid4()),"display_name":display_name or None}; self.people["people"].append(person)
-        self.review["person_faces"][person["person_id"]]=list(dict.fromkeys(face_ids)); self.save(); return person
+
+    def create_person(self, face_ids: Sequence[str], display_name: str|None=None, friendly_name: str|None=None)->dict[str,Any]:
+        unique = list(dict.fromkeys(face_ids))
+        existing = {face_id: person_id for person_id, ids in self.review["person_faces"].items() for face_id in ids}
+        conflicts = sorted({existing[face_id] for face_id in unique if face_id in existing})
+        if conflicts:
+            if len(conflicts) == 1 and set(unique) <= set(self.review["person_faces"].get(conflicts[0], [])):
+                return next(p for p in self.people["people"] if p["person_id"] == conflicts[0])
+            raise ValueError("face already belongs to a confirmed person")
+        person_id = str(uuid.uuid4())
+        person={"person_id":person_id,"friendly_name":friendly_name or person_friendly_name(person_id),"display_name":display_name or None}; self.people["people"].append(person)
+        self.review["person_faces"][person["person_id"]]=unique; self.save(); return person
     def rename_person(self, person_id:str, display_name:str|None)->dict[str,Any]:
         person=next((p for p in self.people["people"] if p["person_id"]==person_id),None)
         if not person: raise KeyError(person_id)
+        person.setdefault("friendly_name", person_friendly_name(person_id))
         person["display_name"]=display_name or None; self.save(); return person
     def record_action(self, action: str, face_ids: Sequence[str], **details: Any) -> dict[str, Any]:
         entry={"action":action,"face_ids":list(dict.fromkeys(face_ids)),"details":details,

@@ -21,6 +21,7 @@ import numpy as np
 from PIL import Image, ImageOps
 
 from .config import SUPPORTED_EXTENSIONS, WORKSPACE_NAME
+from .hashing import photo_id_for_hash
 
 _GROUP_ADJECTIVES = ("amber", "brave", "bright", "calm", "clever", "dancing", "gentle", "golden",
                      "happy", "hidden", "kind", "lively", "lucky", "misty", "quiet", "running")
@@ -178,7 +179,7 @@ def scan_faces(root: Path, store: FaceStore, backend: FaceBackend, *, working_re
     key = model_key(backend)
     for path in (p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS and WORKSPACE_NAME not in p.parts):
         try:
-            fingerprint = _fingerprint(path); image_id = fingerprint
+            fingerprint = _fingerprint(path); image_id = photo_id_for_hash(fingerprint)
             old = store.db.execute("SELECT * FROM scanned_images WHERE image_id=?", (image_id,)).fetchone()
             if old and old["content_fingerprint"] == fingerprint and old["model_key"] == key:
                 stats["skipped"] += 1; continue

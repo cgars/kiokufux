@@ -88,9 +88,10 @@ def _catalog_with_image(root, name="face.jpg"):
     db = Catalog(root / ".kiokufux" / "catalog.sqlite"); db.init_schema()
     img = root / name
     Image.new("RGB", (80, 80), "white").save(img)
-    from kiokufux.hashing import file_sha256
-    photo_id = file_sha256(img)
-    db.upsert_photo(Photo(photo_id, img, name, photo_id, width=80, height=80))
+    from kiokufux.hashing import file_sha256, photo_id_for_hash
+    file_hash = file_sha256(img)
+    photo_id = photo_id_for_hash(file_hash)
+    db.upsert_photo(Photo(photo_id, img, name, file_hash, width=80, height=80))
     return db, img, photo_id
 
 
@@ -123,10 +124,11 @@ def test_export_provisional_confirmed_rejected_and_excluded_faces(tmp_path):
     for name, color in [("a.jpg", "red"), ("b.jpg", "blue")]:
         img = tmp_path / name
         Image.new("RGB", (80, 80), color).save(img)
-        from kiokufux.hashing import file_sha256
-        photo_id = file_sha256(img)
+        from kiokufux.hashing import file_sha256, photo_id_for_hash
+        file_hash = file_sha256(img)
+        photo_id = photo_id_for_hash(file_hash)
         photo_ids.append(photo_id)
-        db.upsert_photo(Photo(photo_id, img, name, photo_id, width=80, height=80))
+        db.upsert_photo(Photo(photo_id, img, name, file_hash, width=80, height=80))
     with FaceStore(workspace) as store:
         scan_faces(tmp_path, store, SidecarFakeBackend(), minimum_face_size=1)
         cluster_faces(store)
@@ -176,9 +178,10 @@ def test_export_provisional_group_identity(tmp_path):
     for name, color in [("a.jpg", "red"), ("b.jpg", "blue")]:
         img = tmp_path / name
         Image.new("RGB", (80, 80), color).save(img)
-        from kiokufux.hashing import file_sha256
-        photo_id = file_sha256(img)
-        db.upsert_photo(Photo(photo_id, img, name, photo_id, width=80, height=80))
+        from kiokufux.hashing import file_sha256, photo_id_for_hash
+        file_hash = file_sha256(img)
+        photo_id = photo_id_for_hash(file_hash)
+        db.upsert_photo(Photo(photo_id, img, name, file_hash, width=80, height=80))
     with FaceStore(workspace) as store:
         scan_faces(tmp_path, store, SidecarFakeBackend(), minimum_face_size=1)
         cluster_faces(store)
@@ -190,3 +193,40 @@ def test_export_provisional_group_identity(tmp_path):
     assert identity["friendly_name"] == friendly_group_name(group["group_id"])
     assert identity["cluster_run_id"] == group["cluster_run_id"]
     assert identity["group_review_state"] == "unreviewed"
+
+
+def test_sidecar_export_joins_catalog_photo_id_to_face_image_id(tmp_path):
+    # Catalog scanning stores the short content-derived photo_id, while the face
+    # scan uses the same logical image_id. This reproduces the real CLI pipeline.
+    from kiokufux.scanner import scan as scan_catalog
+
+    db = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite"); db.init_schema()
+    img = tmp_path / "real.jpg"
+    Image.new("RGB", (80, 80), "purple").save(img)
+    import logging
+    scan_catalog(tmp_path, db, logging.getLogger("test-sidecar"))
+    photo = db.list_photos()[0]
+    workspace = tmp_path / ".kiokufux"
+    with FaceStore(workspace) as store:
+        scan_faces(tmp_path, store, SidecarFakeBackend(), minimum_face_size=1)
+        stored_image_id = store.db.execute("SELECT image_id FROM face_occurrences").fetchone()[0]
+    assert stored_image_id == photo.photo_id
+    export_sidecars(db, workspace=workspace)
+    faces = json.loads((tmp_path / "real.jpg.kiokufux.json").read_text())["faces"]
+    assert faces["scan_status"] == "scanned"
+    assert faces["occurrences"][0]["identity"] == {"status": "ungrouped"}
+
+
+def test_sidecar_export_reads_legacy_full_sha_face_image_ids(tmp_path):
+    db, img, photo_id = _catalog_with_image(tmp_path, "legacy.jpg")
+    workspace = tmp_path / ".kiokufux"
+    with FaceStore(workspace) as store:
+        scan_faces(tmp_path, store, SidecarFakeBackend(), minimum_face_size=1)
+        full_hash = db.get_photo(photo_id).file_hash
+        store.db.execute("UPDATE scanned_images SET image_id=?", (full_hash,))
+        store.db.execute("UPDATE face_occurrences SET image_id=?", (full_hash,))
+        store.db.commit()
+    export_sidecars(db, workspace=workspace)
+    faces = json.loads((tmp_path / "legacy.jpg.kiokufux.json").read_text())["faces"]
+    assert faces["scan_status"] == "scanned"
+    assert faces["occurrences"][0]["identity"] == {"status": "ungrouped"}

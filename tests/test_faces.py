@@ -146,3 +146,43 @@ def test_review_api_exposes_group_detail_and_source_context(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def test_review_api_creates_group_from_ungrouped_faces_and_ui_feedback(tmp_path):
+    Image.new("RGB", (100, 100), "red").save(tmp_path / "one.jpg")
+    Image.new("RGB", (100, 100), "blue").save(tmp_path / "two.jpg")
+    workspace = tmp_path / ".kiokufux"
+    with FaceStore(workspace) as store:
+        scan_faces(tmp_path, store, FakeBackend(), minimum_face_size=1)
+        face_ids = [row[0] for row in store.db.execute("SELECT face_id FROM face_occurrences ORDER BY face_id")]
+        assert store.groups() == []
+    server = make_server(tmp_path, workspace)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        with urllib.request.urlopen(base + "/api/status") as response:
+            collection_id = json.load(response)["collection_id"]
+        payload = json.dumps({"collection_id": collection_id, "face_ids": face_ids}).encode()
+        request = urllib.request.Request(base + "/api/review/create-group", data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(request) as response:
+            group = json.load(response)
+        assert response.status == 201
+        assert group["review_state"] == "needs_review"
+        assert {face["face_id"] for face in group["faces"]} == set(face_ids)
+        with FaceStore(workspace) as store:
+            groups = store.groups()
+            assert len(groups) == 1
+            assert groups[0]["group_id"] == group["group_id"]
+        review = json.loads((workspace / "face-review.json").read_text())
+        assert review["actions"][-1]["action"] == "must-link"
+        assert review["actions"][-1]["details"]["source"] == "create-group"
+        with urllib.request.urlopen(base + "/") as response:
+            page = response.read().decode()
+        assert "Create group from selected" in page
+        assert "toast" in page
+        assert "saved." in page
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()

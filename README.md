@@ -48,47 +48,61 @@ becomes a stable, collection-local person, and its display name remains optional
 
 ## CLI usage
 
+Global options:
+
 ```bash
-kiokufux -v init PATH
+kiokufux [-v|--verbose] COMMAND ...
+```
+
+Complete command reference:
+
+```bash
+kiokufux init PATH
 kiokufux scan PATH
 kiokufux thumbnails PATH
-kiokufux rotate PATH PHOTO_ID_OR_7_CHAR_PREFIX --degrees 90
-kiokufux rotate PATH --auto
-kiokufux rotate PATH --auto --vlm-fallback
-kiokufux rotate PATH --auto --vlm-only
-kiokufux rotate PATH --auto --vlm-only --vlm-compare
-kiokufux rotate PATH --auto --vlm-only --vlm-verify
-kiokufux prompts --topic rotation
-kiokufux embed PATH
-kiokufux search PATH "query text"
-kiokufux search PATH "query text" --summary
-kiokufux -v search PATH "query text" --summary
-kiokufux tag PATH PHOTO_ID "family party"
-kiokufux auto-tag PATH
-kiokufux vlm-analyze PATH
-kiokufux vlm-analyze PATH --vlm-backend ollama --ollama-url http://HOST:11434 --ollama-model MODEL
-kiokufux descriptions PATH [PHOTO_ID]
-kiokufux tag-summary PATH
-kiokufux vocab-propose PATH
-kiokufux vocab PATH
-kiokufux vocab-accept PATH TAG [--category CATEGORY] [--scope core|collection-specific|optional]
-kiokufux vocab-reject PATH TAG
-kiokufux vocab-merge PATH ALIAS CANONICAL_TAG
-kiokufux vocab-apply PATH
-kiokufux tag-proposals PATH [PHOTO_ID]
-kiokufux tag-review PATH [PHOTO_ID]
-kiokufux accept-tag PATH PHOTO_ID_OR_7_CHAR_PREFIX TAG
-kiokufux accept-tag PATH [PHOTO_ID_OR_7_CHAR_PREFIX] --all
-kiokufux reject-tag PATH PHOTO_ID TAG
-kiokufux tags PATH [PHOTO_ID]
-kiokufux untag PATH PHOTO_ID "family party"
 kiokufux export-sidecars PATH
+kiokufux export-gallery PATH OUTPUT [--title TITLE] [--query QUERY] [--tag TAG] [--top-k TOP_K] [--min-tag-count MIN_TAG_COUNT] [--max-cloud-tags MAX_CLOUD_TAGS] [--image-max-size IMAGE_MAX_SIZE] [--overwrite] [--embedding-backend auto|openclip|simple] [--openclip-model MODEL] [--openclip-pretrained WEIGHTS]
+
+kiokufux rotate PATH [PHOTO_ID_OR_7_CHAR_PREFIX] (--degrees 90|180|270 | --auto) [--no-backup] [--vlm-fallback] [--vlm-only] [--vlm-verify] [--vlm-compare] [--vlm-backend fake|ollama] [--ollama-url URL] [--ollama-model MODEL] [--vlm-timeout SECONDS]
+kiokufux prompts [--topic all|rotation|vlm-analysis]
+
+kiokufux embed PATH [--embedding-backend auto|openclip|simple] [--openclip-model MODEL] [--openclip-pretrained WEIGHTS]
+kiokufux search PATH "query text" [--top-k TOP_K] [--summary] [--min-raw-score SCORE] [--min-robust-z SCORE] [--embedding-backend auto|openclip|simple] [--openclip-model MODEL] [--openclip-pretrained WEIGHTS]
+
+kiokufux tag PATH PHOTO_ID TAG [TAG ...]
+kiokufux untag PATH PHOTO_ID TAG [TAG ...]
+kiokufux tags PATH [PHOTO_ID]
+kiokufux auto-tag PATH [--candidate-tags TAGS] [--top-k TOP_K] [--min-score SCORE] [--embedding-backend auto|openclip|simple] [--openclip-model MODEL] [--openclip-pretrained WEIGHTS]
+kiokufux tag-summary PATH [--status pending|accepted|rejected|all]
+kiokufux tag-proposals PATH [PHOTO_ID] [--status pending|accepted|rejected|all]
+kiokufux tag-review PATH [PHOTO_ID] [--status pending|accepted|rejected|all]
+kiokufux accept-tag PATH [PHOTO_ID_OR_7_CHAR_PREFIX] [TAG] [--all] [--source SOURCE]
+kiokufux reject-tag PATH PHOTO_ID TAG [--source SOURCE]
+
+kiokufux vocab PATH [--status proposed|accepted|rejected|all]
+kiokufux vocab-propose PATH [--min-photos MIN_PHOTOS]
+kiokufux vocab-accept PATH TAG [--category CATEGORY] [--scope core|collection-specific|optional] [--parent PARENT] [--alias ALIAS] [--notes NOTES]
+kiokufux vocab-reject PATH TAG [--notes NOTES]
+kiokufux vocab-merge PATH ALIAS CANONICAL_TAG
+kiokufux vocab-apply PATH [--source SOURCE]
+
+kiokufux vlm-analyze PATH [--vlm-backend fake|ollama] [--ollama-url URL] [--ollama-model MODEL] [--vlm-timeout SECONDS] [--limit LIMIT] [--force]
+kiokufux descriptions PATH [PHOTO_ID]
+kiokufux vlm-descriptions PATH [PHOTO_ID]
+
 kiokufux faces scan PATH [--device auto|cuda|cpu]
 kiokufux faces cluster PATH
-kiokufux faces review PATH [--port 0] [--no-open]
+kiokufux faces review PATH [--host HOST] [--port PORT] [--no-open]
 kiokufux faces reset-derived PATH
 kiokufux faces remove-all PATH --yes
 ```
+
+Notes:
+
+- `tag-review` is an alias for `tag-proposals`.
+- `vlm-descriptions` is an alias for `descriptions`.
+- `accept-tag --all` accepts all pending proposals, optionally limited by `PHOTO_ID_OR_7_CHAR_PREFIX`; single-proposal acceptance uses `PHOTO_ID_OR_7_CHAR_PREFIX TAG`.
+- `faces review` defaults to a loopback host; non-loopback hosts are rejected by the review server.
 
 ## Example workflow
 

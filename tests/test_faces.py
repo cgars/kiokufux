@@ -215,8 +215,53 @@ def test_confirmed_tab_lists_confirmed_people(tmp_path):
             page = response.read().decode()
         assert "showConfirmed" in page
         assert "/api/people" in page
-        assert "Confirmed people are stable collection-local people." in page
+        assert "Open a confirmed person to inspect their photographs or merge duplicates." in page
         assert "No confirmed people yet" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_confirmed_people_detail_opens_photos_and_merges_people(tmp_path):
+    Image.new("RGB", (100, 100), "red").save(tmp_path / "one.jpg")
+    Image.new("RGB", (100, 100), "blue").save(tmp_path / "two.jpg")
+    workspace = tmp_path / ".kiokufux"
+    with FaceStore(workspace) as store:
+        scan_faces(tmp_path, store, FakeBackend(), minimum_face_size=1)
+        face_ids = [row[0] for row in store.db.execute("SELECT face_id FROM face_occurrences ORDER BY face_id")]
+    state = ReviewState(workspace)
+    source = state.create_person([face_ids[0]], "Anna", friendly_name="quiet_fox")
+    target = state.create_person([face_ids[1]], None, friendly_name="calm_otter")
+    server = make_server(tmp_path, workspace)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        with urllib.request.urlopen(base + f"/api/people/{source['person_id']}") as response:
+            detail = json.load(response)
+        assert detail["faces"][0]["face_id"] == face_ids[0]
+        assert all(key in detail["faces"][0] for key in ("image_id", "x1", "y1", "x2", "y2"))
+        with urllib.request.urlopen(base + "/api/status") as response:
+            collection_id = json.load(response)["collection_id"]
+        payload = json.dumps({"collection_id": collection_id, "source_person_id": source["person_id"], "target_person_id": target["person_id"]}).encode()
+        request = urllib.request.Request(base + "/api/people/merge", data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(request) as response:
+            merged = json.load(response)
+        assert merged["person_id"] == target["person_id"]
+        assert {face["face_id"] for face in merged["faces"]} == set(face_ids)
+        with urllib.request.urlopen(base + "/api/people") as response:
+            people = json.load(response)
+        assert [person["person_id"] for person in people] == [target["person_id"]]
+        review = json.loads((workspace / "face-review.json").read_text())
+        assert set(review["person_faces"][target["person_id"]]) == set(face_ids)
+        assert source["person_id"] not in review["person_faces"]
+        assert review["actions"][-1]["action"] == "merge-people"
+        with urllib.request.urlopen(base + "/") as response:
+            page = response.read().decode()
+        assert "openPerson" in page
+        assert "Merge confirmed people" in page
+        assert "personMergeTarget" in page
     finally:
         server.shutdown()
         server.server_close()

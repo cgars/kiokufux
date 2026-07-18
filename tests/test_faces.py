@@ -186,3 +186,38 @@ def test_review_api_creates_group_from_ungrouped_faces_and_ui_feedback(tmp_path)
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def test_confirmed_tab_lists_confirmed_people(tmp_path):
+    Image.new("RGB", (100, 100), "red").save(tmp_path / "one.jpg")
+    workspace = tmp_path / ".kiokufux"
+    with FaceStore(workspace) as store:
+        scan_faces(tmp_path, store, FakeBackend(), minimum_face_size=1)
+        face_id = store.db.execute("SELECT face_id FROM face_occurrences").fetchone()[0]
+    state = ReviewState(workspace)
+    person = state.create_person([face_id], "Anna", friendly_name="quiet_fox")
+    server = make_server(tmp_path, workspace)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        with urllib.request.urlopen(base + "/api/people") as response:
+            people = json.load(response)
+        assert people == [{
+            "display_name": "Anna",
+            "face_count": 1,
+            "friendly_name": "quiet_fox",
+            "person_id": person["person_id"],
+            "photo_count": 1,
+            "representative_face_id": face_id,
+        }]
+        with urllib.request.urlopen(base + "/") as response:
+            page = response.read().decode()
+        assert "showConfirmed" in page
+        assert "/api/people" in page
+        assert "Confirmed people are stable collection-local people." in page
+        assert "No confirmed people yet" in page
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()

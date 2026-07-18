@@ -126,16 +126,22 @@ def test_review_api_exposes_group_detail_and_source_context(tmp_path):
         assert all(0 <= detections[0][key] <= 1 for key in ("x1", "y1", "x2", "y2"))
         with urllib.request.urlopen(base + "/") as response:
             page = response.read().decode()
-        assert "View in photograph" in page
+        assert "Open photograph" in page
         assert "Compare selected" in page
-        assert "Marked photograph" in page
+        assert "Source photograph" in page
         assert "Zoom in" in page
         assert "zoom-viewport" in page
         assert "wheelZoom" in page
+        assert "KiokuFux · People" in page
+        assert "actions-panel" in page
+        assert "More actions" in page
+        assert "Clear crop" in page
+        assert "checkmark" in page
+        assert "Source photograph" in page
         assert "_" in group["friendly_id"]
         assert "g.friendly_id" in page
         assert "Split selected" in page
-        assert "Confirm as person" in page
+        assert "Confirm person" in page
     finally:
         server.shutdown()
         server.server_close()

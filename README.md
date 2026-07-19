@@ -103,6 +103,7 @@ Notes:
 - `vlm-descriptions` is an alias for `descriptions`.
 - `accept-tag --all` accepts all pending proposals, optionally limited by `PHOTO_ID_OR_7_CHAR_PREFIX`; single-proposal acceptance uses `PHOTO_ID_OR_7_CHAR_PREFIX TAG`.
 - `faces review` defaults to a loopback host; non-loopback hosts are rejected by the review server.
+- The face reviewer uses the gallery's pine-and-paper visual system, responsive photographic cards, and context-sensitive actions for ungrouped detections, provisional groups, and confirmed people.
 
 ## Example workflow
 

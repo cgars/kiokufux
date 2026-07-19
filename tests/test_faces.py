@@ -142,6 +142,17 @@ def test_review_api_exposes_group_detail_and_source_context(tmp_path):
         assert "g.friendly_id" in page
         assert "Split selected" in page
         assert "Confirm person" in page
+        assert 'name="viewport"' in page
+        assert 'name="theme-color" content="#21342b"' in page
+        assert "--pine-950: #17241f" in page
+        assert "Faulmann gallery visual system" in page
+        assert "setActionMode('ungrouped')" in page
+        assert "Known with care" in page
+        assert 'role="button" tabindex="0"' in page
+        assert "aria-pressed" in page
+        assert 'id="confirmDialog"' in page
+        assert "submitPerson" in page
+        assert "prompt(" not in page
     finally:
         server.shutdown()
         server.server_close()

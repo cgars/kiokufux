@@ -165,9 +165,8 @@ keep their stable `person_id` and permanent friendly name. Undo is last-action
 first: review actions are persisted in history, and a newer dependent action can
 block undo until the dependency is resolved. KiokuFux rotations and external edits
 create new content-derived photo IDs; old derived face rows must be invalidated,
-exact quarter-turn rotations can transform durable boxes for review, and arbitrary
-edits or missing detector results are surfaced as `needs_review` instead of being
-silently forgotten. Face image paths are resolved relative to the collection root
+exact quarter-turn rotations can transform durable boxes for review, and some
+edits may require re-scanning and re-review to restore face occurrences.
 when possible so a moved collection remains reviewable, and byte-identical files
 follow KiokuFux catalog semantics as one logical photograph. `faces remove-all --yes` deletes
 both derived and human-authored face data without deleting photographs. Model and

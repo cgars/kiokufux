@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import logging
+import math
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -164,6 +165,53 @@ def _people_by_photo(catalog: Catalog, face_index: FaceSidecarIndex, face_mode: 
     }
 
 
+def _visible_face_boxes(faces: dict, face_mode: str) -> list[dict]:
+    boxes: list[dict] = []
+    for occurrence in faces.get("occurrences", []):
+        identity = occurrence.get("identity", {})
+        status = identity.get("status")
+        if status == "confirmed" and identity.get("person_id"):
+            person_id = str(identity["person_id"])
+            label = identity.get("display_name") or identity.get("friendly_name") or person_id
+            identity_id = f"person:{person_id}"
+        elif status == "provisional" and face_mode in {"grouped", "detected"} and not identity.get("group_conflict"):
+            group_id = identity.get("group_id")
+            if not group_id:
+                continue
+            identity_id = f"group:{group_id}"
+            label = identity.get("friendly_name") or str(group_id)
+        elif status == "ungrouped" and face_mode == "detected":
+            identity_id = "unknown"
+            label = "Unknown person"
+        else:
+            continue
+
+        raw_box = occurrence.get("box") or {}
+        try:
+            values = {key: float(raw_box[key]) for key in ("x1", "y1", "x2", "y2")}
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not all(math.isfinite(value) for value in values.values()):
+            continue
+        values = {key: min(1.0, max(0.0, value)) for key, value in values.items()}
+        if values["x2"] <= values["x1"] or values["y2"] <= values["y1"]:
+            continue
+        boxes.append({
+            "identity_id": identity_id,
+            "label": label,
+            "status": status,
+            "box": values,
+        })
+    return boxes
+
+
+def _face_boxes_by_photo(catalog: Catalog, face_index: FaceSidecarIndex, face_mode: str) -> dict[str, list[dict]]:
+    return {
+        photo.photo_id: _visible_face_boxes(face_index.for_photo(photo.photo_id), face_mode)
+        for photo in catalog.list_photos()
+    }
+
+
 def _resolve_person_ids(people_by_photo: dict[str, list[dict]], selectors: list[str] | None) -> set[str]:
     aliases: dict[str, set[str]] = {}
     for people in people_by_photo.values():
@@ -287,12 +335,15 @@ def export_gallery(
     workspace: Path | None = None,
     collection_root: Path | None = None,
     face_mode: str = "none",
+    face_boxes: bool = False,
     people: list[str] | None = None,
     face_groups: list[str] | None = None,
     unknown_faces: bool = False,
 ) -> GalleryExportResult:
     if face_mode not in FACE_MODES:
         raise ValueError(f"Unsupported gallery face mode: {face_mode!r}")
+    if face_boxes and face_mode == "none":
+        raise ValueError("Gallery face boxes require a published face mode")
 
     source_root = (collection_root or catalog.db_path.parent.parent).resolve()
 
@@ -300,11 +351,14 @@ def export_gallery(
     group_selectors = face_groups or []
     selection_index: dict[str, list[dict]] = {}
     published_people_index: dict[str, list[dict]] = {}
+    published_face_boxes_index: dict[str, list[dict]] = {}
     if face_mode != "none" or person_selectors or group_selectors or unknown_faces:
         face_index = FaceSidecarIndex.load(workspace or catalog.db_path.parent)
         selection_index = _people_by_photo(catalog, face_index, "detected")
         if face_mode != "none":
             published_people_index = _people_by_photo(catalog, face_index, face_mode)
+            if face_boxes:
+                published_face_boxes_index = _face_boxes_by_photo(catalog, face_index, face_mode)
     identity_ids = _resolve_person_ids(selection_index, person_selectors)
     identity_ids.update(_resolve_group_ids(selection_index, group_selectors))
     if unknown_faces:
@@ -392,6 +446,8 @@ def export_gallery(
         }
         if face_mode != "none":
             item["people"] = published_people_index.get(photo.photo_id, [])
+        if face_boxes:
+            item["face_boxes"] = published_face_boxes_index.get(photo.photo_id, [])
         items.append(item)
     source_summary = {
         "query": query,
@@ -404,6 +460,8 @@ def export_gallery(
         source_summary["people"] = person_selectors
         source_summary["face_groups"] = group_selectors
         source_summary["unknown_faces"] = unknown_faces
+        if face_boxes:
+            source_summary["face_boxes"] = True
     else:
         if person_selectors:
             source_summary["person_filter_count"] = len(person_selectors)

@@ -26,6 +26,11 @@ html {
   scroll-behavior: smooth;
 }
 
+html.dialog-open,
+html.dialog-open body {
+  overflow: hidden;
+}
+
 body {
   min-width: 280px;
   margin: 0;
@@ -591,6 +596,7 @@ input[type="search"]:focus {
 
 .lightbox {
   width: min(94vw, 1280px);
+  height: min(92vh, 900px);
   max-width: none;
   max-height: 92vh;
   padding: 0;
@@ -610,24 +616,142 @@ input[type="search"]:focus {
 .lightbox-shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(260px, 340px);
-  min-height: min(78vh, 760px);
+  height: 100%;
+  min-height: 0;
 }
 
 .lightbox-media {
   position: relative;
   display: grid;
   min-height: 0;
-  place-items: center;
   overflow: hidden;
   background: var(--pine-950);
 }
 
-.lightbox-media > img {
+.lightbox-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: rgba(255, 255, 255, 0.35) transparent;
+  scrollbar-width: thin;
+  cursor: grab;
+}
+
+.lightbox-viewport.dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.lightbox-media-sizer {
+  display: grid;
+  width: max-content;
+  min-width: 100%;
+  height: max-content;
+  min-height: 100%;
+  place-items: center;
+}
+
+.lightbox-media-canvas {
+  position: relative;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.lightbox-media-canvas > img {
   display: block;
   width: 100%;
   height: 100%;
-  max-height: 92vh;
-  object-fit: contain;
+  user-select: none;
+}
+
+.media-tools {
+  position: absolute;
+  z-index: 3;
+  bottom: 1rem;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.32rem;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  background: rgba(23, 36, 31, 0.82);
+  color: white;
+  transform: translateX(-50%);
+  backdrop-filter: blur(10px);
+}
+
+.media-tools button {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.6rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.media-tools button:hover,
+.media-tools button[aria-pressed="true"] {
+  background: var(--rust);
+}
+
+.media-tools output {
+  min-width: 3.2rem;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.face-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.face-overlay[hidden] {
+  display: none;
+}
+
+.face-box {
+  position: absolute;
+  border: max(2px, 0.12rem) solid #f4d078;
+  border-radius: 0.3rem;
+  box-shadow: 0 0 0 1px rgba(10, 17, 14, 0.55), 0 0 1.25rem rgba(244, 208, 120, 0.18);
+}
+
+.face-box.face-provisional {
+  border-style: dashed;
+  border-color: #c3d89a;
+}
+
+.face-box.face-ungrouped {
+  border-color: #e8ece6;
+}
+
+.face-box-label {
+  position: absolute;
+  top: 0;
+  left: -2px;
+  max-width: 12rem;
+  padding: 0.22rem 0.4rem;
+  overflow: hidden;
+  border-radius: 0 0 0.25rem 0;
+  background: rgba(16, 29, 23, 0.9);
+  color: white;
+  font-size: clamp(0.58rem, 1.2vw, 0.72rem);
+  font-weight: 700;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .lightbox-close,
@@ -688,8 +812,11 @@ input[type="search"]:focus {
 }
 
 .lightbox-info {
+  min-height: 0;
   padding: clamp(1.5rem, 4vw, 2.4rem);
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--moss-300) transparent;
 }
 
 .lightbox-position {
@@ -718,7 +845,27 @@ input[type="search"]:focus {
   line-height: 1.65;
 }
 
+.description.collapsed {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+}
+
+.description-toggle {
+  margin-top: 0.55rem;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  background: transparent;
+  color: var(--rust-dark);
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 .description:empty,
+.description-toggle[hidden],
 .detail-people-section[hidden],
 .detail-tags:empty,
 .details:empty {
@@ -862,13 +1009,14 @@ input[type="search"]:focus {
     flex: 1 1 62%;
   }
 
-  .lightbox-media > img {
-    max-height: 64dvh;
-  }
-
   .lightbox-info {
+    min-height: 0;
     flex: 1 1 38%;
     padding: 1.25rem 1.2rem 2rem;
+  }
+
+  .media-tools {
+    bottom: 0.65rem;
   }
 
   .lightbox-position {

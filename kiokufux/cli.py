@@ -197,6 +197,7 @@ def _build_parser() -> argparse.ArgumentParser:
     gallery.add_argument("--person", action="append", default=[], help="Export only photos containing this confirmed display name, friendly name, or person ID; repeatable")
     gallery.add_argument("--face-group", action="append", default=[], help="Export only photos containing this provisional friendly group name or group ID; repeatable")
     gallery.add_argument("--unknown-faces", action="store_true", help="Export only photos containing usable ungrouped face detections")
+    gallery.add_argument("--face-boxes", action="store_true", help="Publish normalized face bounding boxes and enable the gallery overlay; requires --faces")
     gallery.add_argument("--top-k", type=int)
     gallery.add_argument("--min-tag-count", type=int, default=2)
     gallery.add_argument("--max-cloud-tags", type=int, default=40)
@@ -441,6 +442,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(cleaned_argv)
     args.verbose = max(args.verbose, extracted_verbose)
+    if args.cmd == "export-gallery" and args.face_boxes and args.faces == "none":
+        parser.error("--face-boxes requires --faces confirmed, grouped, or detected")
     if args.cmd == "prompts":
         _print_prompts(args.topic)
         return 0
@@ -562,6 +565,7 @@ def main(argv: list[str] | None = None) -> int:
                 workspace=ws,
                 collection_root=root,
                 face_mode=args.faces,
+                face_boxes=args.face_boxes,
                 people=args.person,
                 face_groups=args.face_group,
                 unknown_faces=args.unknown_faces,

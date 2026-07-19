@@ -70,6 +70,10 @@ def test_export_gallery_writes_portable_files_and_filters_by_tag(tmp_path):
     index = (tmp_path / "out" / "index.html").read_text()
     script = (tmp_path / "out" / "gallery.js").read_text()
     assert 'id="gallery-data" type="application/json"' in index
+    assert 'id="media-viewport"' in index
+    assert 'id="zoom-in"' in index
+    assert 'id="description-toggle"' in index
+    assert 'id="face-toggle"' in index
     assert f'<meta name="generator" content="{EXPORT_FORMAT}">' in index
     assert '"caption": "Sunny beach"' in index
     assert '<link rel="stylesheet" href="style.css">' not in index
@@ -369,6 +373,38 @@ def test_detected_face_mode_adds_aggregate_unknown_filter_but_not_private_face_d
     serialized = json.dumps(doc)
     for forbidden in ("face_id", "box", "detection_confidence", "embedding", "model_key"):
         assert forbidden not in serialized
+
+
+def test_face_boxes_are_separately_opt_in_and_exclude_blocked_faces(tmp_path):
+    db, workspace = _catalog_with_face_modes(tmp_path)
+
+    export_gallery(db, tmp_path / "out", workspace=workspace, face_mode="detected", face_boxes=True)
+
+    doc = json.loads((tmp_path / "out" / "gallery.json").read_text())
+    by_filename = {item["filename"]: item for item in doc["items"]}
+    assert doc["source_summary"]["face_boxes"] is True
+    assert len(by_filename["anna.jpg"]["face_boxes"]) == 1
+    assert len(by_filename["grouped.jpg"]["face_boxes"]) == 1
+    assert len(by_filename["unknown.jpg"]["face_boxes"]) == 1
+    assert by_filename["unknown.jpg"]["face_boxes"][0]["label"] == "Unknown person"
+    assert by_filename["anna.jpg"]["face_boxes"][0]["box"] == pytest.approx({
+        "x1": 0.125,
+        "y1": 0.125,
+        "x2": 0.625,
+        "y2": 0.75,
+    })
+    for filename in ("rejected.jpg", "excluded.jpg", "conflict.jpg"):
+        assert by_filename[filename]["face_boxes"] == []
+    serialized = json.dumps(doc)
+    for forbidden in ("face_id", "detection_confidence", "embedding", "model_key"):
+        assert forbidden not in serialized
+
+
+def test_face_boxes_require_a_published_face_mode(tmp_path):
+    db = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite"); db.init_schema()
+
+    with pytest.raises(ValueError, match="require a published face mode"):
+        export_gallery(db, tmp_path / "out", face_boxes=True)
 
 
 def test_face_group_and_unknown_filters_work_without_publishing_identity_metadata(tmp_path):

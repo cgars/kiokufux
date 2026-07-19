@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from kiokufux.face_review import _send_response_body, make_server, safe_collection_path
+from kiokufux.face_review import HTML, _send_response_body, make_server, safe_collection_path
 from kiokufux.faces import (FaceDetection, FaceStore, ReviewState, boxes_iou,
     cluster_faces, friendly_group_name, normalize_embeddings, scan_faces)
 
@@ -76,6 +76,13 @@ def test_path_traversal_and_iou(tmp_path):
     else:
         raise AssertionError("traversal accepted")
     assert boxes_iou((0, 0, 1, 1), (0, 0, 1, 1)) == 1
+
+def test_review_comparison_sources_fit_and_can_scroll_side_by_side():
+    assert ".compare-items.side-by-side" in HTML
+    assert "compareItems.classList.toggle('side-by-side',items.length>1)" in HTML
+    assert "function fitPhoto(item)" in HTML
+    assert "Math.min(viewport.clientWidth/img.naturalWidth,viewport.clientHeight/img.naturalHeight)" in HTML
+
 
 def test_review_response_ignores_client_disconnects():
     class BrokenWriter:

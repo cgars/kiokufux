@@ -1,10 +1,15 @@
 import json
+import logging
 
+import numpy as np
+import pytest
 from PIL import Image
 
 from kiokufux.catalog import Catalog
+from kiokufux.faces import FaceDetection, FaceStore, ReviewState, scan_faces
 from kiokufux.gallery import EXPORT_FORMAT, SCHEMA, build_gallery_document, export_gallery, published_tags
 from kiokufux.models import Photo
+from kiokufux.scanner import scan as scan_catalog
 from kiokufux.vlm import ImageAnalysis
 
 
@@ -25,11 +30,16 @@ def test_published_tags_canonicalizes_and_excludes_proposals(tmp_path):
 
 
 def test_build_gallery_document_counts_distinct_tags_per_image():
-    doc = build_gallery_document("T", [{"tags": ["beach", "beach", "family"]}, {"tags": ["beach"]}], {})
+    anna = {"person_id": "person-anna", "label": "Anna", "display_name": "Anna", "friendly_name": "quiet_fox"}
+    doc = build_gallery_document("T", [
+        {"tags": ["beach", "beach", "family"], "people": [anna, anna]},
+        {"tags": ["beach"], "people": [anna]},
+    ], {})
 
     assert doc["schema"] == SCHEMA
     assert doc["item_count"] == 2
     assert doc["tag_frequencies"] == {"beach": 2, "family": 1}
+    assert doc["people_frequencies"] == [{**anna, "count": 2}]
 
 
 def test_export_gallery_writes_portable_files_and_filters_by_tag(tmp_path):
@@ -99,3 +109,82 @@ def test_export_gallery_replaces_legacy_file_url_export_without_overwrite(tmp_pa
     index = (output / "index.html").read_text()
     assert f'<meta name="generator" content="{EXPORT_FORMAT}">' in index
     assert "fetch(" not in index
+
+
+class GalleryFaceBackend:
+    backend_id = "fake"
+    model_id = "gallery"
+    model_version = "1"
+    preprocessing_version = "1"
+    embedding_dimensions = 3
+
+    def detect(self, image):
+        return [FaceDetection((10, 10, 50, 60), .99, image.crop((10, 10, 50, 60)))]
+
+    def embed(self, faces):
+        return np.tile(np.array([[1, 0, 0]], dtype=np.float32), (len(faces), 1))
+
+
+def _catalog_with_confirmed_people(root):
+    workspace = root / ".kiokufux"
+    db = Catalog(workspace / "catalog.sqlite"); db.init_schema()
+    for name, color in (("anna.jpg", "red"), ("bert.jpg", "blue")):
+        Image.new("RGB", (80, 80), color).save(root / name)
+    scan_catalog(root, db, logging.getLogger("test-gallery-people"))
+    with FaceStore(workspace) as store:
+        scan_faces(root, store, GalleryFaceBackend(), minimum_face_size=1)
+        rows = store.db.execute("SELECT face_id,image_path FROM face_occurrences ORDER BY image_path").fetchall()
+    faces = {row["image_path"]: row["face_id"] for row in rows}
+    state = ReviewState(workspace)
+    state.create_person([next(face_id for path, face_id in faces.items() if path.endswith("anna.jpg"))], "Anna", friendly_name="quiet_fox")
+    state.create_person([next(face_id for path, face_id in faces.items() if path.endswith("bert.jpg"))], "Bert", friendly_name="calm_badger")
+    return db, workspace
+
+
+def test_export_gallery_can_include_confirmed_people_without_biometric_data(tmp_path):
+    db, workspace = _catalog_with_confirmed_people(tmp_path)
+
+    result = export_gallery(db, tmp_path / "out", workspace=workspace, face_mode="confirmed")
+
+    assert result.exported == 2
+    doc = json.loads((tmp_path / "out" / "gallery.json").read_text())
+    assert [(person["label"], person["count"]) for person in doc["people_frequencies"]] == [("Anna", 1), ("Bert", 1)]
+    assert {item["people"][0]["label"] for item in doc["items"]} == {"Anna", "Bert"}
+    index = (tmp_path / "out" / "index.html").read_text()
+    assert 'id="people-cloud"' in index
+    assert 'id="detail-people"' in index
+    assert "buildPeopleCloud();" in index
+    serialized = json.dumps(doc)
+    for forbidden in ("face_id", "box", "detection_confidence", "embedding", "model_key"):
+        assert forbidden not in serialized
+
+
+def test_export_gallery_filters_by_confirmed_person_name_or_friendly_name(tmp_path):
+    db, workspace = _catalog_with_confirmed_people(tmp_path)
+
+    named = export_gallery(db, tmp_path / "named", workspace=workspace, face_mode="confirmed", people=["anna"])
+    private = export_gallery(db, tmp_path / "private", workspace=workspace, people=["calm_badger"])
+
+    assert named.exported == 1
+    named_doc = json.loads((tmp_path / "named" / "gallery.json").read_text())
+    assert named_doc["items"][0]["filename"] == "anna.jpg"
+    assert named_doc["items"][0]["people"][0]["display_name"] == "Anna"
+    private_doc = json.loads((tmp_path / "private" / "gallery.json").read_text())
+    assert private_doc["items"][0]["filename"] == "bert.jpg"
+    assert "people" not in private_doc["items"][0]
+    assert private_doc["people_frequencies"] == []
+    assert private_doc["source_summary"]["person_filter_count"] == 1
+    assert "calm_badger" not in json.dumps(private_doc)
+
+
+def test_unknown_person_does_not_replace_existing_gallery(tmp_path):
+    db, workspace = _catalog_with_confirmed_people(tmp_path)
+    output = tmp_path / "out"
+    output.mkdir()
+    marker = output / "keep.txt"
+    marker.write_text("keep")
+
+    with pytest.raises(ValueError, match="No confirmed person"):
+        export_gallery(db, output, workspace=workspace, people=["Missing"], overwrite=True)
+
+    assert marker.read_text() == "keep"

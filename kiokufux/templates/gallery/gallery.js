@@ -3,6 +3,7 @@ let data;
 let all = [];
 let shown = [];
 let selectedTag = "";
+let selectedPersonId = "";
 let currentIndex = 0;
 let lastTrigger = null;
 let touchStartX = 0;
@@ -12,6 +13,8 @@ const clearButton = document.querySelector("#clear");
 const grid = document.querySelector("#grid");
 const state = document.querySelector("#state");
 const cloud = document.querySelector("#cloud");
+const peopleFilter = document.querySelector("#people-filter");
+const peopleCloud = document.querySelector("#people-cloud");
 const empty = document.querySelector("#empty");
 const box = document.querySelector("#box");
 const fullImage = document.querySelector("#full");
@@ -19,10 +22,13 @@ const caption = document.querySelector("#cap");
 const description = document.querySelector("#description");
 const position = document.querySelector("#position");
 const detailTags = document.querySelector("#detail-tags");
+const detailPeopleSection = document.querySelector("#detail-people-section");
+const detailPeople = document.querySelector("#detail-people");
 const details = document.querySelector("#details");
 
 function searchableText(item) {
-  return [item.filename, item.relative_path, item.caption, item.description, ...(item.tags || [])]
+  const people = (item.people || []).flatMap((person) => [person.label, person.display_name, person.friendly_name]);
+  return [item.filename, item.relative_path, item.caption, item.description, ...(item.tags || []), ...people]
     .filter(Boolean)
     .join(" ")
     .toLocaleLowerCase()
@@ -53,6 +59,20 @@ function setActiveTag(tag) {
   applyFilters();
 }
 
+function setActivePerson(personId) {
+  selectedPersonId = selectedPersonId === personId ? "" : personId;
+  [...peopleCloud.children].forEach((child) => {
+    const active = child.dataset.personId === selectedPersonId;
+    child.classList.toggle("active", active);
+    child.setAttribute("aria-pressed", String(active));
+  });
+  applyFilters();
+}
+
+function selectedPersonLabel() {
+  return (data.people_frequencies || []).find((person) => person.person_id === selectedPersonId)?.label || selectedPersonId;
+}
+
 function makeCard(item, index) {
   const button = document.createElement("button");
   button.type = "button";
@@ -76,8 +96,9 @@ function makeCard(item, index) {
 
   const metadata = document.createElement("span");
   metadata.className = "card-meta";
+  const previewPeople = (item.people || []).slice(0, 2).map((person) => person.label).join(" · ");
   const previewTags = (item.tags || []).slice(0, 2).join(" · ");
-  metadata.textContent = [displayDate(item.datetime_original), previewTags].filter(Boolean).join("  —  ") || "View photograph";
+  metadata.textContent = [displayDate(item.datetime_original), previewPeople || previewTags].filter(Boolean).join("  —  ") || "View photograph";
   copy.appendChild(metadata);
   button.appendChild(copy);
 
@@ -92,15 +113,17 @@ function applyFilters() {
   const query = queryInput.value.trim().toLocaleLowerCase().replace(/\s+/g, " ");
   shown = all.filter((item) => {
     const tagMatches = !selectedTag || (item.tags || []).includes(selectedTag);
+    const personMatches = !selectedPersonId || (item.people || []).some((person) => person.person_id === selectedPersonId);
     const queryMatches = !query || searchableText(item).includes(query);
-    return tagMatches && queryMatches;
+    return tagMatches && personMatches && queryMatches;
   });
 
   const filters = [];
   if (query) filters.push(`matching “${query}”`);
   if (selectedTag) filters.push(`tagged “${selectedTag}”`);
+  if (selectedPersonId) filters.push(`with “${selectedPersonLabel()}”`);
   state.textContent = `${shown.length} ${shown.length === 1 ? "photograph" : "photographs"}${filters.length ? ` ${filters.join(" and ")}` : ` in this collection`}`;
-  clearButton.hidden = !query && !selectedTag;
+  clearButton.hidden = !query && !selectedTag && !selectedPersonId;
   empty.hidden = shown.length !== 0;
   grid.hidden = shown.length === 0;
   grid.replaceChildren(...shown.map(makeCard));
@@ -129,6 +152,31 @@ function buildTagCloud() {
   });
 }
 
+function buildPeopleCloud() {
+  const people = data.people_frequencies || [];
+  peopleFilter.hidden = people.length === 0;
+  people.forEach((person) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "person-chip";
+    button.dataset.personId = person.person_id;
+    button.setAttribute("aria-pressed", "false");
+
+    const avatar = document.createElement("span");
+    avatar.className = "person-avatar";
+    avatar.textContent = person.label.trim().charAt(0).toLocaleUpperCase() || "•";
+    avatar.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.textContent = person.label;
+    const amount = document.createElement("span");
+    amount.className = "tag-count";
+    amount.textContent = person.count;
+    button.append(avatar, label, amount);
+    button.addEventListener("click", () => setActivePerson(person.person_id));
+    peopleCloud.appendChild(button);
+  });
+}
+
 function addDetail(label, value) {
   if (!value) return;
   const term = document.createElement("dt");
@@ -148,6 +196,28 @@ function showItem(index) {
   caption.textContent = item.caption || item.filename;
   description.textContent = item.description || "";
   position.textContent = `Photograph ${currentIndex + 1} of ${shown.length}`;
+
+  detailPeople.replaceChildren();
+  detailPeopleSection.hidden = !(item.people || []).length;
+  (item.people || []).forEach((person) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.title = `Show photographs with ${person.label}`;
+    const avatar = document.createElement("span");
+    avatar.className = "person-avatar";
+    avatar.textContent = person.label.trim().charAt(0).toLocaleUpperCase() || "•";
+    avatar.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.textContent = person.label;
+    button.append(avatar, label);
+    button.addEventListener("click", () => {
+      box.close();
+      selectedPersonId = "";
+      setActivePerson(person.person_id);
+      document.querySelector(".controls").scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    detailPeople.appendChild(button);
+  });
 
   detailTags.replaceChildren();
   (item.tags || []).forEach((tag) => {
@@ -188,7 +258,12 @@ function moveLightbox(delta) {
 function clearFilters() {
   queryInput.value = "";
   selectedTag = "";
+  selectedPersonId = "";
   [...cloud.children].forEach((child) => {
+    child.classList.remove("active");
+    child.setAttribute("aria-pressed", "false");
+  });
+  [...peopleCloud.children].forEach((child) => {
     child.classList.remove("active");
     child.setAttribute("aria-pressed", "false");
   });
@@ -232,4 +307,5 @@ queryInput.addEventListener("input", applyFilters);
 data = JSON.parse(document.querySelector("#gallery-data").textContent);
 all = Array.isArray(data.items) ? data.items : [];
 buildTagCloud();
+buildPeopleCloud();
 applyFilters();

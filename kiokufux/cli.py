@@ -188,6 +188,8 @@ def _build_parser() -> argparse.ArgumentParser:
     gallery.add_argument("--title", default="KiokuFux Gallery")
     gallery.add_argument("--query")
     gallery.add_argument("--tag", action="append", default=[])
+    gallery.add_argument("--faces", choices=["none", "confirmed"], default="none", help="Include confirmed people in the gallery; disabled by default for privacy")
+    gallery.add_argument("--person", action="append", default=[], help="Export only photos containing this confirmed display name, friendly name, or person ID; repeatable")
     gallery.add_argument("--top-k", type=int)
     gallery.add_argument("--min-tag-count", type=int, default=2)
     gallery.add_argument("--max-cloud-tags", type=int, default=40)
@@ -550,6 +552,9 @@ def main(argv: list[str] | None = None) -> int:
                 image_max_size=args.image_max_size,
                 overwrite=args.overwrite,
                 backend=_embedding_backend(args, config) if args.query else None,
+                workspace=ws,
+                face_mode=args.faces,
+                people=args.person,
             )
             logger.info("Exported gallery to %s: %s exported, %s skipped", result.output, result.exported, result.skipped)
             print(f"Exported gallery to {result.output}: selected={result.selected}, exported={result.exported}, skipped={result.skipped}")

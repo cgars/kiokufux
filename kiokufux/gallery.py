@@ -15,9 +15,11 @@ from .catalog import Catalog
 from .models import Photo
 from .embeddings import EmbeddingBackend
 from .search import search as run_search
+from .sidecar import FaceSidecarIndex
 
 SCHEMA = "kiokufux.gallery.v1"
 EXPORT_FORMAT = "kiokufux-gallery-inline-v1"
+FACE_MODES = {"none", "confirmed"}
 
 
 @dataclass(slots=True)
@@ -63,7 +65,57 @@ def published_tags(catalog: Catalog, photo_id: str) -> list[str]:
     return sorted(tags)
 
 
-def _photos_for_export(catalog: Catalog, tags: list[str] | None = None, query_ids: set[str] | None = None) -> list[Photo]:
+def _confirmed_people(faces: dict) -> list[dict]:
+    people: dict[str, dict] = {}
+    for occurrence in faces.get("occurrences", []):
+        identity = occurrence.get("identity", {})
+        if identity.get("status") != "confirmed" or not identity.get("person_id"):
+            continue
+        person_id = str(identity["person_id"])
+        display_name = identity.get("display_name")
+        friendly_name = identity.get("friendly_name")
+        people[person_id] = {
+            "person_id": person_id,
+            "label": display_name or friendly_name or person_id,
+            "display_name": display_name,
+            "friendly_name": friendly_name,
+        }
+    return sorted(people.values(), key=lambda person: (person["label"].casefold(), person["person_id"]))
+
+
+def _people_by_photo(catalog: Catalog, face_index: FaceSidecarIndex) -> dict[str, list[dict]]:
+    return {
+        photo.photo_id: _confirmed_people(face_index.for_photo(photo.photo_id))
+        for photo in catalog.list_photos()
+    }
+
+
+def _resolve_person_ids(people_by_photo: dict[str, list[dict]], selectors: list[str] | None) -> set[str]:
+    aliases: dict[str, set[str]] = {}
+    for people in people_by_photo.values():
+        for person in people:
+            for value in (person["person_id"], person.get("display_name"), person.get("friendly_name")):
+                if value:
+                    aliases.setdefault(str(value).strip().casefold(), set()).add(person["person_id"])
+
+    resolved: set[str] = set()
+    for selector in selectors or []:
+        matches = aliases.get(selector.strip().casefold(), set())
+        if not matches:
+            raise ValueError(f"No confirmed person matches {selector!r}")
+        if len(matches) > 1:
+            raise ValueError(f"Confirmed person name {selector!r} is ambiguous; use a person_id or friendly name")
+        resolved.update(matches)
+    return resolved
+
+
+def _photos_for_export(
+    catalog: Catalog,
+    tags: list[str] | None = None,
+    query_ids: set[str] | None = None,
+    person_ids: set[str] | None = None,
+    people_by_photo: dict[str, list[dict]] | None = None,
+) -> list[Photo]:
     photos = catalog.list_photos()
     if query_ids is not None:
         photos = [photo for photo in photos if photo.photo_id in query_ids]
@@ -75,6 +127,12 @@ def _photos_for_export(catalog: Catalog, tags: list[str] | None = None, query_id
             if any(tag in pts for tag in filters):
                 filtered.append(photo)
         photos = filtered
+    if person_ids:
+        index = people_by_photo or {}
+        photos = [
+            photo for photo in photos
+            if any(person["person_id"] in person_ids for person in index.get(photo.photo_id, []))
+        ]
     return photos
 
 
@@ -86,6 +144,20 @@ def _tag_frequencies(items: list[dict]) -> dict[str, int]:
     return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
 
 
+def _people_frequencies(items: list[dict]) -> list[dict]:
+    people: dict[str, dict] = {}
+    counts: dict[str, int] = {}
+    for item in items:
+        for person in {p["person_id"]: p for p in item.get("people", [])}.values():
+            person_id = person["person_id"]
+            people[person_id] = person
+            counts[person_id] = counts.get(person_id, 0) + 1
+    return [
+        {**people[person_id], "count": counts[person_id]}
+        for person_id in sorted(people, key=lambda pid: (-counts[pid], people[pid]["label"].casefold(), pid))
+    ]
+
+
 def build_gallery_document(title: str, items: list[dict], source_summary: dict) -> dict:
     return {
         "schema": SCHEMA,
@@ -95,6 +167,7 @@ def build_gallery_document(title: str, items: list[dict], source_summary: dict) 
         "item_count": len(items),
         "items": items,
         "tag_frequencies": _tag_frequencies(items),
+        "people_frequencies": _people_frequencies(items),
     }
 
 
@@ -111,7 +184,31 @@ def export_gallery(
     image_max_size: int | None = None,
     overwrite: bool = False,
     backend: EmbeddingBackend | None = None,
+    workspace: Path | None = None,
+    face_mode: str = "none",
+    people: list[str] | None = None,
 ) -> GalleryExportResult:
+    if face_mode not in FACE_MODES:
+        raise ValueError(f"Unsupported gallery face mode: {face_mode!r}")
+
+    person_selectors = people or []
+    people_index: dict[str, list[dict]] = {}
+    if face_mode == "confirmed" or person_selectors:
+        face_index = FaceSidecarIndex.load(workspace or catalog.db_path.parent)
+        people_index = _people_by_photo(catalog, face_index)
+    person_ids = _resolve_person_ids(people_index, person_selectors)
+
+    query_ids = None
+    if query:
+        query_ids = {r.photo_id for r in run_search(catalog, query, top_k=top_k, backend=backend)}
+    photos = _photos_for_export(
+        catalog,
+        tags=tags,
+        query_ids=query_ids,
+        person_ids=person_ids,
+        people_by_photo=people_index,
+    )
+
     if output.exists():
         if not overwrite and not _is_legacy_gallery_export(output):
             raise FileExistsError(f"Output directory already exists: {output}")
@@ -120,10 +217,6 @@ def export_gallery(
     (output / "images").mkdir()
     (output / "thumbnails").mkdir()
 
-    query_ids = None
-    if query:
-        query_ids = {r.photo_id for r in run_search(catalog, query, top_k=top_k, backend=backend)}
-    photos = _photos_for_export(catalog, tags=tags, query_ids=query_ids)
     items: list[dict] = []
     skipped = 0
     for photo in photos:
@@ -142,7 +235,7 @@ def export_gallery(
         analysis = catalog.get_image_analysis(photo.photo_id)
         caption = analysis.caption if analysis else None
         description = analysis.description if analysis else None
-        items.append({
+        item = {
             "photo_id": photo.photo_id,
             "image_path": image_rel,
             "thumbnail_path": thumb_rel,
@@ -154,8 +247,22 @@ def export_gallery(
             "datetime_original": photo.exif_datetime_original,
             "dimensions": {"width": photo.width, "height": photo.height},
             "metadata": {"mime_type": photo.mime_type, "gps": {"lat": photo.exif_gps_lat, "lon": photo.exif_gps_lon}},
-        })
-    doc = build_gallery_document(title, items, {"query": query, "tags": tags or [], "selected": len(photos), "skipped": skipped})
+        }
+        if face_mode == "confirmed":
+            item["people"] = people_index.get(photo.photo_id, [])
+        items.append(item)
+    source_summary = {
+        "query": query,
+        "tags": tags or [],
+        "faces": face_mode,
+        "selected": len(photos),
+        "skipped": skipped,
+    }
+    if face_mode == "confirmed":
+        source_summary["people"] = person_selectors
+    elif person_selectors:
+        source_summary["person_filter_count"] = len(person_selectors)
+    doc = build_gallery_document(title, items, source_summary)
     (output / "gallery.json").write_text(json.dumps(doc, indent=2, sort_keys=True), encoding="utf-8")
     _write_gallery_template_files(output, title, min_tag_count, max_cloud_tags, doc)
     return GalleryExportResult(len(photos), len(items), skipped, output)

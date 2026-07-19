@@ -83,6 +83,31 @@ def test_export_gallery_writes_portable_files_and_filters_by_tag(tmp_path):
     assert "fetch(" not in index
 
 
+def test_export_gallery_bulk_loads_and_reuses_canonical_tags(tmp_path):
+    db = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite"); db.init_schema()
+    image = tmp_path / "source.jpg"
+    _image(image)
+    db.upsert_vocabulary_tag("beach", status="accepted", aliases=["seaside"])
+    for index in range(30):
+        photo_id = f"id-{index}"
+        db.upsert_photo(Photo(photo_id, image, f"photos/{index}.jpg", f"hash-{index}"))
+        db.add_tag(photo_id, "seaside" if index % 2 else "indoors")
+
+    statements = []
+    db.conn.set_trace_callback(statements.append)
+    try:
+        result = export_gallery(db, tmp_path / "out", tags=["beach"])
+    finally:
+        db.conn.set_trace_callback(None)
+
+    doc = json.loads((tmp_path / "out" / "gallery.json").read_text())
+    photo_tag_reads = [statement for statement in statements if "FROM PHOTO_TAGS" in statement.upper()]
+    assert result.selected == 15
+    assert result.exported == 15
+    assert len(photo_tag_reads) == 1
+    assert all(item["tags"] == ["beach"] for item in doc["items"])
+
+
 def test_export_gallery_uses_relative_path_after_collection_moves(tmp_path):
     collection = tmp_path / "moved-collection"
     image = collection / "nested" / "photo.jpg"

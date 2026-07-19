@@ -101,10 +101,28 @@ def _source_path(photo: Photo, collection_root: Path) -> Path | None:
     return None
 
 
+def _published_tags_by_photo(catalog: Catalog, photo_id: str | None = None) -> dict[str, list[str]]:
+    sql = """
+        SELECT pt.photo_id, COALESCE(ta.tag, pt.tag) AS canonical_tag
+        FROM photo_tags pt
+        LEFT JOIN tag_aliases ta ON ta.alias=pt.tag
+        WHERE pt.source IN ('manual','auto')
+    """
+    params: tuple[str, ...] = ()
+    if photo_id is not None:
+        sql += " AND pt.photo_id=?"
+        params = (photo_id,)
+    sql += " ORDER BY pt.photo_id, canonical_tag"
+    tags: dict[str, set[str]] = {}
+    for row in catalog.conn.execute(sql, params):
+        canonical = str(row["canonical_tag"] or "")
+        if canonical:
+            tags.setdefault(str(row["photo_id"]), set()).add(canonical)
+    return {key: sorted(values) for key, values in tags.items()}
+
+
 def published_tags(catalog: Catalog, photo_id: str) -> list[str]:
-    tags = {catalog.canonical_tag(row.tag) for row in catalog.list_tags(photo_id) if row.source in {"manual", "auto"}}
-    tags.discard("")
-    return sorted(tags)
+    return _published_tags_by_photo(catalog, photo_id).get(photo_id, [])
 
 
 def _visible_people(faces: dict, face_mode: str) -> list[dict]:
@@ -260,15 +278,17 @@ def _photos_for_export(
     query_ids: set[str] | None = None,
     identity_ids: set[str] | None = None,
     people_by_photo: dict[str, list[dict]] | None = None,
+    tags_by_photo: dict[str, list[str]] | None = None,
 ) -> list[Photo]:
     photos = catalog.list_photos()
     if query_ids is not None:
         photos = [photo for photo in photos if photo.photo_id in query_ids]
     filters = [catalog.canonical_tag(tag) for tag in (tags or [])]
     if filters:
+        tag_index = tags_by_photo if tags_by_photo is not None else _published_tags_by_photo(catalog)
         filtered = []
         for photo in photos:
-            pts = set(published_tags(catalog, photo.photo_id))
+            pts = set(tag_index.get(photo.photo_id, []))
             if any(tag in pts for tag in filters):
                 filtered.append(photo)
         photos = filtered
@@ -367,12 +387,14 @@ def export_gallery(
     query_ids = None
     if query:
         query_ids = {r.photo_id for r in run_search(catalog, query, top_k=top_k, backend=backend)}
+    published_tag_index = _published_tags_by_photo(catalog)
     photos = _photos_for_export(
         catalog,
         tags=tags,
         query_ids=query_ids,
         identity_ids=identity_ids,
         people_by_photo=selection_index,
+        tags_by_photo=published_tag_index,
     )
 
     if output.exists():
@@ -439,7 +461,7 @@ def export_gallery(
             "relative_path": photo.relative_path,
             "caption": caption,
             "description": description,
-            "tags": published_tags(catalog, photo.photo_id),
+            "tags": published_tag_index.get(photo.photo_id, []),
             "datetime_original": photo.exif_datetime_original,
             "dimensions": {"width": photo.width, "height": photo.height},
             "metadata": {"mime_type": photo.mime_type, "gps": {"lat": photo.exif_gps_lat, "lon": photo.exif_gps_lon}},

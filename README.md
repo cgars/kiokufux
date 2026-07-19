@@ -31,44 +31,78 @@ pip install -e '.[clip]'
 
 If OpenCLIP is unavailable, KiokuFux falls back to a dependency-light local embedding backend so the MVP remains runnable offline.
 
-## CLI usage
+For local recurring-face discovery, install the optional inference stack. The first
+run may download the explicitly selected facenet-pytorch VGGFace2 weights; subsequent
+processing is offline:
 
 ```bash
-kiokufux -v init PATH
+pip install -e '.[faces]'
+kiokufux faces scan ./photos
+kiokufux faces cluster ./photos
+kiokufux faces review ./photos
+```
+
+Face groups are anonymous algorithmic suggestions. KiokuFux never assigns names or
+creates people automatically: only a reviewed group explicitly confirmed by a user
+becomes a stable, collection-local person, and its display name remains optional.
+
+## CLI usage
+
+Global options:
+
+```bash
+kiokufux [-v|--verbose] COMMAND ...
+```
+
+Complete command reference:
+
+```bash
+kiokufux init PATH
 kiokufux scan PATH
 kiokufux thumbnails PATH
-kiokufux rotate PATH PHOTO_ID_OR_7_CHAR_PREFIX --degrees 90
-kiokufux rotate PATH --auto
-kiokufux rotate PATH --auto --vlm-fallback
-kiokufux rotate PATH --auto --vlm-only
-kiokufux rotate PATH --auto --vlm-only --vlm-compare
-kiokufux rotate PATH --auto --vlm-only --vlm-verify
-kiokufux prompts --topic rotation
-kiokufux embed PATH
-kiokufux search PATH "query text"
-kiokufux search PATH "query text" --summary
-kiokufux -v search PATH "query text" --summary
-kiokufux tag PATH PHOTO_ID "family party"
-kiokufux auto-tag PATH
-kiokufux vlm-analyze PATH
-kiokufux vlm-analyze PATH --vlm-backend ollama --ollama-url http://HOST:11434 --ollama-model MODEL
-kiokufux descriptions PATH [PHOTO_ID]
-kiokufux tag-summary PATH
-kiokufux vocab-propose PATH
-kiokufux vocab PATH
-kiokufux vocab-accept PATH TAG [--category CATEGORY] [--scope core|collection-specific|optional]
-kiokufux vocab-reject PATH TAG
-kiokufux vocab-merge PATH ALIAS CANONICAL_TAG
-kiokufux vocab-apply PATH
-kiokufux tag-proposals PATH [PHOTO_ID]
-kiokufux tag-review PATH [PHOTO_ID]
-kiokufux accept-tag PATH PHOTO_ID_OR_7_CHAR_PREFIX TAG
-kiokufux accept-tag PATH [PHOTO_ID_OR_7_CHAR_PREFIX] --all
-kiokufux reject-tag PATH PHOTO_ID TAG
-kiokufux tags PATH [PHOTO_ID]
-kiokufux untag PATH PHOTO_ID "family party"
 kiokufux export-sidecars PATH
+kiokufux export-gallery PATH OUTPUT [--title TITLE] [--query QUERY] [--tag TAG] [--top-k TOP_K] [--min-tag-count MIN_TAG_COUNT] [--max-cloud-tags MAX_CLOUD_TAGS] [--image-max-size IMAGE_MAX_SIZE] [--overwrite] [--embedding-backend auto|openclip|simple] [--openclip-model MODEL] [--openclip-pretrained WEIGHTS]
+
+kiokufux rotate PATH [PHOTO_ID_OR_7_CHAR_PREFIX] (--degrees 90|180|270 | --auto) [--no-backup] [--vlm-fallback] [--vlm-only] [--vlm-verify] [--vlm-compare] [--vlm-backend fake|ollama] [--ollama-url URL] [--ollama-model MODEL] [--vlm-timeout SECONDS]
+kiokufux prompts [--topic all|rotation|vlm-analysis]
+
+kiokufux embed PATH [--embedding-backend auto|openclip|simple] [--openclip-model MODEL] [--openclip-pretrained WEIGHTS]
+kiokufux search PATH "query text" [--top-k TOP_K] [--summary] [--min-raw-score SCORE] [--min-robust-z SCORE] [--embedding-backend auto|openclip|simple] [--openclip-model MODEL] [--openclip-pretrained WEIGHTS]
+
+kiokufux tag PATH PHOTO_ID TAG [TAG ...]
+kiokufux untag PATH PHOTO_ID TAG [TAG ...]
+kiokufux tags PATH [PHOTO_ID]
+kiokufux auto-tag PATH [--candidate-tags TAGS] [--top-k TOP_K] [--min-score SCORE] [--embedding-backend auto|openclip|simple] [--openclip-model MODEL] [--openclip-pretrained WEIGHTS]
+kiokufux tag-summary PATH [--status pending|accepted|rejected|all]
+kiokufux tag-proposals PATH [PHOTO_ID] [--status pending|accepted|rejected|all]
+kiokufux tag-review PATH [PHOTO_ID] [--status pending|accepted|rejected|all]
+kiokufux accept-tag PATH [PHOTO_ID_OR_7_CHAR_PREFIX] [TAG] [--all] [--source SOURCE]
+kiokufux reject-tag PATH PHOTO_ID TAG [--source SOURCE]
+
+kiokufux vocab PATH [--status proposed|accepted|rejected|all]
+kiokufux vocab-propose PATH [--min-photos MIN_PHOTOS]
+kiokufux vocab-accept PATH TAG [--category CATEGORY] [--scope core|collection-specific|optional] [--parent PARENT] [--alias ALIAS] [--notes NOTES]
+kiokufux vocab-reject PATH TAG [--notes NOTES]
+kiokufux vocab-merge PATH ALIAS CANONICAL_TAG
+kiokufux vocab-apply PATH [--source SOURCE]
+
+kiokufux vlm-analyze PATH [--vlm-backend fake|ollama] [--ollama-url URL] [--ollama-model MODEL] [--vlm-timeout SECONDS] [--limit LIMIT] [--force]
+kiokufux descriptions PATH [PHOTO_ID]
+kiokufux vlm-descriptions PATH [PHOTO_ID]
+
+kiokufux faces scan PATH [--device auto|cuda|cpu]
+kiokufux faces cluster PATH
+kiokufux faces review PATH [--host HOST] [--port PORT] [--no-open]
+kiokufux faces reset-derived PATH
+kiokufux faces remove-all PATH --yes
 ```
+
+Notes:
+
+- `tag-review` is an alias for `tag-proposals`.
+- `vlm-descriptions` is an alias for `descriptions`.
+- `accept-tag --all` accepts all pending proposals, optionally limited by `PHOTO_ID_OR_7_CHAR_PREFIX`; single-proposal acceptance uses `PHOTO_ID_OR_7_CHAR_PREFIX TAG`.
+- `faces review` defaults to a loopback host; non-loopback hosts are rejected by the review server.
 
 ## Example workflow
 
@@ -107,7 +141,40 @@ The workspace is created at `./photos/.kiokufux/`:
   embeddings/
   indexes/
   logs/
+  faces.sqlite
+  face-review.json
+  people.json
+  cache/face-thumbnails/
 ```
+
+## Face-data privacy and recovery
+
+Face detection, 512-dimensional embeddings, anonymous clustering, review, and person
+metadata stay inside the collection workspace. Face embeddings are biometric-derived
+data: protect and back up `.kiokufux/` with the same care as the photographs. The
+review server refuses non-loopback hosts by default and does not perform cloud lookup,
+telemetry, demographic inference, or automatic identification. Source photographs
+are opened read-only and are never cropped or rewritten by the face workflow.
+
+`faces reset-derived` deletes the rebuildable SQLite index and face-thumbnail cache
+but preserves `people.json` and `face-review.json`; durable face locators let a
+later scan reconnect unchanged reviewed occurrences where the face region can be
+matched safely. If re-clustering creates a different provisional set, that new
+group remains a provisional suggestion tied to its cluster run; confirmed people
+keep their stable `person_id` and permanent friendly name. Undo is last-action
+first: review actions are persisted in history, and a newer dependent action can
+block undo until the dependency is resolved. KiokuFux rotations and external edits
+create new content-derived photo IDs; old derived face rows must be invalidated,
+exact quarter-turn rotations can transform durable boxes for review, and some
+edits may require re-scanning and re-review to restore face occurrences.
+when possible so a moved collection remains reviewable, and byte-identical files
+follow KiokuFux catalog semantics as one logical photograph. `faces remove-all --yes` deletes
+both derived and human-authored face data without deleting photographs. Model and
+preprocessing identifiers are stored beside every compact float32 embedding, and
+incompatible versions are clustered separately. The default backend uses
+facenet-pytorch (MIT-licensed code) with its `vggface2` pretrained InceptionResnetV1;
+review the upstream weights terms and VGGFace2 training-data provenance for your use
+before installation. KiokuFux does not bundle those weights or use InsightFace models.
 
 ## Configuration
 
@@ -197,13 +264,43 @@ This is useful for fixing incorrectly oriented scans, but it is intentionally ex
 
 ## Sidecars
 
-`kiokufux export-sidecars ./photos` writes files named like `image.jpg.kiokufux.json` next to each indexed image. Sidecars use schema `kiokufux.sidecar.v1` and include IDs, source paths, hashes, extracted metadata, semantic status, and review state.
+`kiokufux export-sidecars ./photos` writes files named like `image.jpg.kiokufux.json` next to each indexed image. Sidecars use schema `kiokufux.sidecar.v2` and include IDs, source paths, hashes, extracted metadata, semantic status, review state, and a `faces` block when face data exists. Face sidecars are included by default for local export but never include embedding vectors, embedding BLOBs, raw model tensors, or face-thumbnail paths.
+
+The `faces.scan_status` value distinguishes `not_scanned` from `scanned` with zero detections. Each occurrence exports a stable `face_id`, normalized oriented-image box coordinates, detector confidence, optional quality, and an `identity.status` of `confirmed`, `provisional`, `ungrouped`, `excluded`, `rejected`, or `conflict`. Provisional groups export a non-identifying run-scoped `friendly_name` such as `quiet_fox`, the `group_id`, `cluster_run_id`, review state, and conflict flag. Confirmed people export a stable `person_id`, a permanent non-identifying person `friendly_name`, and an optional user-entered `display_name`; assigned display names may be real names and are copied into local sidecars, so treat exported sidecars as private data. Existing schema-v1 `people.json` files are migrated atomically by assigning deterministic friendly names from stable `person_id` values, not from current provisional group IDs.
+
+Compact example:
+
+```json
+{
+  "schema": "kiokufux.sidecar.v2",
+  "photo_id": "photo-sha256",
+  "source_path": "photos/a.jpg",
+  "file_hash": "photo-sha256",
+  "metadata": {"width": 1600, "height": 1200, "datetime_original": null, "gps": {"lat": null, "lon": null}},
+  "semantic": {"embedding_model": null, "auto_tags": [], "caption": null, "description": null, "vlm": null, "status": "pending"},
+  "review": {"state": "unreviewed", "tags": [], "tag_proposals": []},
+  "faces": {
+    "scan_status": "scanned",
+    "model_key": "facenet-pytorch:inception-resnet-v1-vggface2:facenet-pytorch:mtcnn-160-v1:512",
+    "occurrences": [
+      {
+        "face_id": "face-uuid",
+        "box": {"x1": 0.12, "y1": 0.08, "x2": 0.31, "y2": 0.42},
+        "detection_confidence": 0.992,
+        "quality": null,
+        "identity": {"status": "confirmed", "person_id": "person-uuid", "friendly_name": "quiet_fox", "display_name": "Anna"}
+      }
+    ]
+  }
+}
+```
+
 
 ## Limitations
 
 - The fallback embedding backend is lightweight and local but not as semantically powerful as a downloaded OpenCLIP model.
 - Search is a simple NumPy scan over stored vectors; FAISS or hnswlib can be added later.
-- No face recognition, person clustering, event detection, historical place-name logic, GUI, accounts, sync, sharing, or hosted service is included.
+- No event detection, historical place-name logic, accounts, sync, sharing, hosted service, cloud face lookup, or automatic real-world person identification is included.
 - Metadata is read from images but never written back to originals.
 
 ## Suggested next MVPs

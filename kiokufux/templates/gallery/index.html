@@ -3,37 +3,105 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#26372f">
   <meta name="generator" content="$export_format">
   <title>$title</title>
   <style>$style_css</style>
 </head>
 <body>
-  <header class="toolbar">
-    <h1>$title</h1>
-    <label class="search-label" for="q">Search gallery metadata</label>
-    <div class="search-row">
-      <input id="q" type="search" placeholder="Search filename, caption, description, tags" aria-label="Search metadata">
-      <button id="clear" type="button">Clear</button>
+  <a class="skip-link" href="#gallery">Skip to photos</a>
+
+  <header class="hero">
+    <div class="hero-inner">
+      <div class="brand" aria-label="KiokuFux">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 48 48" role="img">
+            <path d="M9 31c7-2 8-9 10-17 4 3 7 8 7 13 3-7 8-10 14-11-1 12-7 22-18 22-6 0-10-3-13-7Z"/>
+            <path class="brand-mark-line" d="M13 31c6 2 13 1 18-4"/>
+          </svg>
+        </span>
+        <span>KiokuFux</span>
+      </div>
+      <p class="eyebrow">A private photo collection</p>
+      <h1>$title</h1>
+      <p class="intro">Small moments, carefully kept. Search the archive or follow a tag into the woods.</p>
     </div>
-    <p id="state" class="state" aria-live="polite"></p>
-    <div id="cloud" class="cloud" aria-label="Tag cloud"></div>
   </header>
-  <main>
+
+  <div class="controls-wrap">
+    <section class="controls" aria-label="Gallery controls">
+      <div class="search-wrap">
+        <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="11" cy="11" r="6.5"></circle>
+          <path d="m16 16 4 4"></path>
+        </svg>
+        <label class="visually-hidden" for="q">Search gallery metadata</label>
+        <input id="q" type="search" placeholder="Search places, people, captions, tags…" aria-label="Search gallery metadata" autocomplete="off">
+        <button id="clear" class="clear-button" type="button" hidden>Clear</button>
+        <kbd class="search-hint" aria-hidden="true">/</kbd>
+      </div>
+
+      <div class="filter-heading">
+        <div>
+          <span class="section-label">Wander by subject</span>
+          <p id="state" class="state" aria-live="polite"></p>
+        </div>
+        <button id="density" class="icon-button" type="button" aria-pressed="false" title="Show smaller photos">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+            <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+            <rect x="3" y="14" width="7" height="7" rx="1"></rect>
+            <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+          </svg>
+          <span class="visually-hidden">Toggle compact gallery</span>
+        </button>
+      </div>
+      <div id="cloud" class="cloud" aria-label="Filter by tag"></div>
+    </section>
+  </div>
+
+  <main id="gallery" class="gallery-shell">
     <div id="grid" class="grid"></div>
-    <p id="empty" class="empty" hidden>No matching photos. Clear the search or selected tag.</p>
+    <section id="empty" class="empty" hidden>
+      <span class="empty-mark" aria-hidden="true">⌁</span>
+      <h2>No photographs found</h2>
+      <p>Try a broader search, or clear the selected tag.</p>
+      <button id="empty-clear" class="primary-button" type="button">Show the whole collection</button>
+    </section>
   </main>
-  <dialog id="box" class="lightbox">
-    <div class="lightbox-actions">
-      <button id="close" type="button">Close (Esc)</button>
-      <button id="prev" type="button">Previous</button>
-      <button id="next" type="button">Next</button>
+
+  <footer class="footer">
+    <span>Made from your archive by KiokuFux</span>
+    <span class="footer-leaf" aria-hidden="true">◆</span>
+    <span>Private · local · yours</span>
+  </footer>
+
+  <dialog id="box" class="lightbox" aria-labelledby="cap">
+    <div class="lightbox-shell">
+      <div class="lightbox-media">
+        <img id="full" alt="">
+        <button id="prev" class="lightbox-nav lightbox-prev" type="button" aria-label="Previous photo">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg>
+        </button>
+        <button id="next" class="lightbox-nav lightbox-next" type="button" aria-label="Next photo">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"></path></svg>
+        </button>
+        <button id="close" class="lightbox-close" type="button" aria-label="Close photo">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+        </button>
+      </div>
+      <aside class="lightbox-info">
+        <p id="position" class="lightbox-position"></p>
+        <h2 id="cap"></h2>
+        <p id="description" class="description"></p>
+        <div id="detail-tags" class="detail-tags" aria-label="Photo tags"></div>
+        <dl id="details" class="details"></dl>
+        <p class="keyboard-help">Use <kbd>←</kbd> <kbd>→</kbd> to browse and <kbd>Esc</kbd> to close.</p>
+      </aside>
     </div>
-    <figure>
-      <img id="full" alt="">
-      <figcaption id="cap"></figcaption>
-    </figure>
-    <p id="detail" class="meta"></p>
   </dialog>
+
   <script id="gallery-data" type="application/json">$gallery_json</script>
   <script>window.KIOKUFUX_GALLERY_CONFIG = $config_json;</script>
   <script>$gallery_js</script>

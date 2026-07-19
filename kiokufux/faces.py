@@ -173,7 +173,7 @@ def _fingerprint(path: Path) -> str:
 
 
 def scan_faces(root: Path, store: FaceStore, backend: FaceBackend, *, working_resolution: int = 1600,
-               confidence_threshold: float = .95, minimum_face_size: int = 40) -> dict[str, int]:
+               confidence_threshold: float = .95, minimum_face_size: int = 40, thumbnail_size: int = 256) -> dict[str, int]:
     stats = {"scanned": 0, "skipped": 0, "failed": 0, "detected": 0, "embedded": 0, "rejected": 0}
     cache = store.workspace / "cache" / "face-thumbnails"; cache.mkdir(parents=True, exist_ok=True)
     key = model_key(backend)
@@ -207,7 +207,7 @@ def scan_faces(root: Path, store: FaceStore, backend: FaceBackend, *, working_re
                     (face_id,image_id,str(path.resolve().relative_to(root.resolve())),*box,json.dumps(landmarks),detection.confidence,detection.quality,
                      backend.backend_id,backend.model_id,backend.model_version,backend.preprocessing_version,
                      backend.embedding_dimensions,1,vector.astype('<f4').tobytes(),fingerprint,now))
-                crop = oriented.crop((box[0]*ow,box[1]*oh,box[2]*ow,box[3]*oh)); crop.thumbnail((256,256)); crop.save(cache/f"{face_id}.jpg", "JPEG")
+                crop = oriented.crop((box[0]*ow,box[1]*oh,box[2]*ow,box[3]*oh)); crop.thumbnail((thumbnail_size,thumbnail_size)); crop.save(cache/f"{face_id}.jpg", "JPEG")
             store.db.execute("INSERT OR REPLACE INTO scanned_images VALUES(?,?,?,?,?)", (image_id,str(path.resolve().relative_to(root.resolve())),fingerprint,key,now))
             store.db.commit(); stats["scanned"] += 1; stats["embedded"] += len(usable)
         except Exception:

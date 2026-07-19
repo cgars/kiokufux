@@ -475,7 +475,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Face backend: {backend.backend_id}/{backend.model_id}; device={backend.device}",file=sys.stderr)
             with FaceStore(ws) as store:
                 stats=scan_faces(root,store,backend,working_resolution=config.faces.working_resolution,
-                    confidence_threshold=config.faces.detection_confidence,minimum_face_size=config.faces.minimum_face_size)
+                    confidence_threshold=config.faces.detection_confidence,minimum_face_size=config.faces.minimum_face_size,
+                    thumbnail_size=config.faces.thumbnail_size)
             print("Face scan complete: "+", ".join(f"{k}={v}" for k,v in stats.items())); return 0
         if args.faces_cmd == "cluster":
             with FaceStore(ws) as store: stats=cluster_faces(store,min_cluster_size=config.faces.min_cluster_size,min_samples=config.faces.min_samples)

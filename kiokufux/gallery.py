@@ -46,17 +46,34 @@ def _copy_image(src: Path, dst: Path, image_max_size: int | None = None) -> None
         fixed.convert("RGB").save(dst, "JPEG", quality=88)
 
 
-def _write_thumbnail(photo: Photo, dst: Path, catalog: Catalog) -> None:
+def _write_thumbnail(photo: Photo, source: Path, dst: Path, catalog: Catalog) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     if photo.thumbnail_path:
         thumb = catalog.artifact_path(photo.thumbnail_path)
         if thumb.exists():
             shutil.copy2(thumb, dst)
             return
-    with Image.open(photo.source_path) as img:
+    with Image.open(source) as img:
         fixed = ImageOps.exif_transpose(img)
         fixed.thumbnail((360, 360), Image.Resampling.LANCZOS)
         fixed.convert("RGB").save(dst, "JPEG", quality=82)
+
+
+def _source_path(photo: Photo, collection_root: Path) -> Path | None:
+    """Locate a photo in the current collection before trying its indexed absolute path."""
+    try:
+        root = collection_root.resolve()
+        relative_candidate = (root / photo.relative_path).resolve()
+        if relative_candidate.is_relative_to(root) and relative_candidate.is_file():
+            return relative_candidate
+    except (OSError, RuntimeError):
+        pass
+    try:
+        if photo.source_path.is_file():
+            return photo.source_path
+    except OSError:
+        pass
+    return None
 
 
 def published_tags(catalog: Catalog, photo_id: str) -> list[str]:
@@ -244,6 +261,7 @@ def export_gallery(
     overwrite: bool = False,
     backend: EmbeddingBackend | None = None,
     workspace: Path | None = None,
+    collection_root: Path | None = None,
     face_mode: str = "none",
     people: list[str] | None = None,
     face_groups: list[str] | None = None,
@@ -251,6 +269,8 @@ def export_gallery(
 ) -> GalleryExportResult:
     if face_mode not in FACE_MODES:
         raise ValueError(f"Unsupported gallery face mode: {face_mode!r}")
+
+    source_root = (collection_root or catalog.db_path.parent.parent).resolve()
 
     person_selectors = people or []
     group_selectors = face_groups or []
@@ -288,15 +308,16 @@ def export_gallery(
     items: list[dict] = []
     skipped = 0
     for photo in photos:
-        if not photo.source_path.exists():
+        source = _source_path(photo, source_root)
+        if source is None:
             skipped += 1
             continue
-        image_ext = ".jpg" if image_max_size else (photo.source_path.suffix or ".jpg")
+        image_ext = ".jpg" if image_max_size else (source.suffix or ".jpg")
         image_rel = f"images/{_safe_name(photo, image_ext)}"
         thumb_rel = f"thumbnails/{photo.photo_id}.jpg"
         try:
-            _copy_image(photo.source_path, output / image_rel, image_max_size=image_max_size)
-            _write_thumbnail(photo, output / thumb_rel, catalog)
+            _copy_image(source, output / image_rel, image_max_size=image_max_size)
+            _write_thumbnail(photo, source, output / thumb_rel, catalog)
         except Exception:
             skipped += 1
             continue
@@ -307,7 +328,7 @@ def export_gallery(
             "photo_id": photo.photo_id,
             "image_path": image_rel,
             "thumbnail_path": thumb_rel,
-            "filename": photo.source_path.name,
+            "filename": source.name,
             "relative_path": photo.relative_path,
             "caption": caption,
             "description": description,

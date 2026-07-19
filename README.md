@@ -313,6 +313,8 @@ Compact example:
 
 `kiokufux export-gallery PATH OUTPUT` creates a standalone, offline-friendly gallery in `OUTPUT` with `index.html`, `gallery.json`, static CSS/JavaScript assets, copied images, and thumbnails. Open `index.html` directly in a browser; its data, CSS, and JavaScript are embedded, so no local web server is required. The gallery searches filenames, relative paths, VLM captions/descriptions, manual tags, and accepted automatic tags in the browser, and includes a frequency-weighted tag cloud for published tags. Exports from the earlier `fetch("gallery.json")` implementation are detected and replaced automatically; use `--overwrite` to regenerate any other existing export.
 
+During export, source photographs are located from the current collection `PATH` and their indexed relative paths first. The stored absolute path is only a compatibility fallback, so moving the whole collection between drives, mount points, or machines does not require a rescan when its internal directory structure remains unchanged. Relative paths are constrained to the collection root.
+
 Face information is excluded by default. The optional `--faces` modes progressively add privacy-safe People filters:
 
 - `confirmed` publishes user-confirmed people using stable person IDs, display names, and friendly names.

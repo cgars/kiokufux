@@ -77,6 +77,50 @@ def test_export_gallery_writes_portable_files_and_filters_by_tag(tmp_path):
     assert "fetch(" not in index
 
 
+def test_export_gallery_uses_relative_path_after_collection_moves(tmp_path):
+    collection = tmp_path / "moved-collection"
+    image = collection / "nested" / "photo.jpg"
+    image.parent.mkdir(parents=True)
+    _image(image)
+    db = Catalog(collection / ".kiokufux" / "catalog.sqlite"); db.init_schema()
+    stale_source = tmp_path / "old-location" / "nested" / "photo.jpg"
+    db.upsert_photo(Photo("id", stale_source, "nested/photo.jpg", "hash", width=8, height=6))
+
+    result = export_gallery(db, tmp_path / "out", collection_root=collection)
+
+    assert result.exported == 1
+    assert result.skipped == 0
+    assert (tmp_path / "out" / "images" / "id.jpg").read_bytes() == image.read_bytes()
+
+
+def test_export_gallery_falls_back_to_indexed_absolute_path(tmp_path):
+    collection = tmp_path / "collection"
+    collection.mkdir()
+    image = tmp_path / "legacy-location.jpg"
+    _image(image)
+    db = Catalog(collection / ".kiokufux" / "catalog.sqlite"); db.init_schema()
+    db.upsert_photo(Photo("id", image.resolve(), "missing/photo.jpg", "hash"))
+
+    result = export_gallery(db, tmp_path / "out", collection_root=collection)
+
+    assert result.exported == 1
+    assert result.skipped == 0
+
+
+def test_export_gallery_rejects_relative_paths_outside_collection(tmp_path):
+    collection = tmp_path / "collection"
+    collection.mkdir()
+    outside = tmp_path / "outside.jpg"
+    _image(outside)
+    db = Catalog(collection / ".kiokufux" / "catalog.sqlite"); db.init_schema()
+    db.upsert_photo(Photo("id", tmp_path / "missing.jpg", "../outside.jpg", "hash"))
+
+    result = export_gallery(db, tmp_path / "out", collection_root=collection)
+
+    assert result.exported == 0
+    assert result.skipped == 1
+
+
 def test_export_gallery_safely_embeds_markup_in_metadata(tmp_path):
     db = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite"); db.init_schema()
     image = tmp_path / "x.jpg"; _image(image)

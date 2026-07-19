@@ -560,6 +560,7 @@ def main(argv: list[str] | None = None) -> int:
                 overwrite=args.overwrite,
                 backend=_embedding_backend(args, config) if args.query else None,
                 workspace=ws,
+                collection_root=root,
                 face_mode=args.faces,
                 people=args.person,
                 face_groups=args.face_group,

@@ -188,8 +188,15 @@ def _build_parser() -> argparse.ArgumentParser:
     gallery.add_argument("--title", default="KiokuFux Gallery")
     gallery.add_argument("--query")
     gallery.add_argument("--tag", action="append", default=[])
-    gallery.add_argument("--faces", choices=["none", "confirmed"], default="none", help="Include confirmed people in the gallery; disabled by default for privacy")
+    gallery.add_argument(
+        "--faces",
+        choices=["none", "confirmed", "grouped", "detected"],
+        default="none",
+        help="Publish confirmed people, anonymous recurring groups, or all usable detections; disabled by default for privacy",
+    )
     gallery.add_argument("--person", action="append", default=[], help="Export only photos containing this confirmed display name, friendly name, or person ID; repeatable")
+    gallery.add_argument("--face-group", action="append", default=[], help="Export only photos containing this provisional friendly group name or group ID; repeatable")
+    gallery.add_argument("--unknown-faces", action="store_true", help="Export only photos containing usable ungrouped face detections")
     gallery.add_argument("--top-k", type=int)
     gallery.add_argument("--min-tag-count", type=int, default=2)
     gallery.add_argument("--max-cloud-tags", type=int, default=40)
@@ -555,6 +562,8 @@ def main(argv: list[str] | None = None) -> int:
                 workspace=ws,
                 face_mode=args.faces,
                 people=args.person,
+                face_groups=args.face_group,
+                unknown_faces=args.unknown_faces,
             )
             logger.info("Exported gallery to %s: %s exported, %s skipped", result.output, result.exported, result.skipped)
             print(f"Exported gallery to {result.output}: selected={result.selected}, exported={result.exported}, skipped={result.skipped}")

@@ -19,7 +19,7 @@ from .sidecar import FaceSidecarIndex
 
 SCHEMA = "kiokufux.gallery.v1"
 EXPORT_FORMAT = "kiokufux-gallery-inline-v1"
-FACE_MODES = {"none", "confirmed"}
+FACE_MODES = {"none", "confirmed", "grouped", "detected"}
 
 
 @dataclass(slots=True)
@@ -65,27 +65,60 @@ def published_tags(catalog: Catalog, photo_id: str) -> list[str]:
     return sorted(tags)
 
 
-def _confirmed_people(faces: dict) -> list[dict]:
+def _visible_people(faces: dict, face_mode: str) -> list[dict]:
     people: dict[str, dict] = {}
+    unknown_count = 0
     for occurrence in faces.get("occurrences", []):
         identity = occurrence.get("identity", {})
-        if identity.get("status") != "confirmed" or not identity.get("person_id"):
+        status = identity.get("status")
+        if status == "confirmed" and identity.get("person_id"):
+            person_id = str(identity["person_id"])
+            display_name = identity.get("display_name")
+            friendly_name = identity.get("friendly_name")
+            identity_id = f"person:{person_id}"
+            people[identity_id] = {
+                "identity_id": identity_id,
+                "person_id": person_id,
+                "label": display_name or friendly_name or person_id,
+                "display_name": display_name,
+                "friendly_name": friendly_name,
+                "status": "confirmed",
+            }
             continue
-        person_id = str(identity["person_id"])
-        display_name = identity.get("display_name")
-        friendly_name = identity.get("friendly_name")
-        people[person_id] = {
-            "person_id": person_id,
-            "label": display_name or friendly_name or person_id,
-            "display_name": display_name,
-            "friendly_name": friendly_name,
+        if status == "provisional" and face_mode in {"grouped", "detected"}:
+            group_id = identity.get("group_id")
+            if not group_id or identity.get("group_conflict"):
+                continue
+            group_id = str(group_id)
+            identity_id = f"group:{group_id}"
+            people[identity_id] = {
+                "identity_id": identity_id,
+                "group_id": group_id,
+                "label": identity.get("friendly_name") or group_id,
+                "friendly_name": identity.get("friendly_name"),
+                "status": "provisional",
+                "review_state": identity.get("group_review_state"),
+            }
+            continue
+        if status == "ungrouped" and face_mode == "detected":
+            unknown_count += 1
+    if unknown_count:
+        people["unknown"] = {
+            "identity_id": "unknown",
+            "label": "Unknown people",
+            "status": "ungrouped",
+            "count_in_photo": unknown_count,
         }
-    return sorted(people.values(), key=lambda person: (person["label"].casefold(), person["person_id"]))
+    status_order = {"confirmed": 0, "provisional": 1, "ungrouped": 2}
+    return sorted(
+        people.values(),
+        key=lambda person: (status_order[person["status"]], person["label"].casefold(), person["identity_id"]),
+    )
 
 
-def _people_by_photo(catalog: Catalog, face_index: FaceSidecarIndex) -> dict[str, list[dict]]:
+def _people_by_photo(catalog: Catalog, face_index: FaceSidecarIndex, face_mode: str) -> dict[str, list[dict]]:
     return {
-        photo.photo_id: _confirmed_people(face_index.for_photo(photo.photo_id))
+        photo.photo_id: _visible_people(face_index.for_photo(photo.photo_id), face_mode)
         for photo in catalog.list_photos()
     }
 
@@ -94,9 +127,11 @@ def _resolve_person_ids(people_by_photo: dict[str, list[dict]], selectors: list[
     aliases: dict[str, set[str]] = {}
     for people in people_by_photo.values():
         for person in people:
-            for value in (person["person_id"], person.get("display_name"), person.get("friendly_name")):
+            if person.get("status") != "confirmed":
+                continue
+            for value in (person["person_id"], person.get("display_name"), person.get("friendly_name"), person["identity_id"]):
                 if value:
-                    aliases.setdefault(str(value).strip().casefold(), set()).add(person["person_id"])
+                    aliases.setdefault(str(value).strip().casefold(), set()).add(person["identity_id"])
 
     resolved: set[str] = set()
     for selector in selectors or []:
@@ -109,11 +144,32 @@ def _resolve_person_ids(people_by_photo: dict[str, list[dict]], selectors: list[
     return resolved
 
 
+def _resolve_group_ids(people_by_photo: dict[str, list[dict]], selectors: list[str] | None) -> set[str]:
+    aliases: dict[str, set[str]] = {}
+    for people in people_by_photo.values():
+        for person in people:
+            if person.get("status") != "provisional":
+                continue
+            for value in (person["group_id"], person.get("friendly_name"), person["identity_id"]):
+                if value:
+                    aliases.setdefault(str(value).strip().casefold(), set()).add(person["identity_id"])
+
+    resolved: set[str] = set()
+    for selector in selectors or []:
+        matches = aliases.get(selector.strip().casefold(), set())
+        if not matches:
+            raise ValueError(f"No provisional face group matches {selector!r}")
+        if len(matches) > 1:
+            raise ValueError(f"Provisional face group name {selector!r} is ambiguous; use a group_id")
+        resolved.update(matches)
+    return resolved
+
+
 def _photos_for_export(
     catalog: Catalog,
     tags: list[str] | None = None,
     query_ids: set[str] | None = None,
-    person_ids: set[str] | None = None,
+    identity_ids: set[str] | None = None,
     people_by_photo: dict[str, list[dict]] | None = None,
 ) -> list[Photo]:
     photos = catalog.list_photos()
@@ -127,11 +183,11 @@ def _photos_for_export(
             if any(tag in pts for tag in filters):
                 filtered.append(photo)
         photos = filtered
-    if person_ids:
+    if identity_ids:
         index = people_by_photo or {}
         photos = [
             photo for photo in photos
-            if any(person["person_id"] in person_ids for person in index.get(photo.photo_id, []))
+            if any(person["identity_id"] in identity_ids for person in index.get(photo.photo_id, []))
         ]
     return photos
 
@@ -148,13 +204,16 @@ def _people_frequencies(items: list[dict]) -> list[dict]:
     people: dict[str, dict] = {}
     counts: dict[str, int] = {}
     for item in items:
-        for person in {p["person_id"]: p for p in item.get("people", [])}.values():
-            person_id = person["person_id"]
-            people[person_id] = person
-            counts[person_id] = counts.get(person_id, 0) + 1
+        distinct = {}
+        for person in item.get("people", []):
+            identity_id = person.get("identity_id") or f"person:{person['person_id']}"
+            distinct[identity_id] = person
+        for identity_id, person in distinct.items():
+            people[identity_id] = {key: value for key, value in person.items() if key != "count_in_photo"}
+            counts[identity_id] = counts.get(identity_id, 0) + 1
     return [
-        {**people[person_id], "count": counts[person_id]}
-        for person_id in sorted(people, key=lambda pid: (-counts[pid], people[pid]["label"].casefold(), pid))
+        {**people[identity_id], "count": counts[identity_id]}
+        for identity_id in sorted(people, key=lambda iid: (-counts[iid], people[iid]["label"].casefold(), iid))
     ]
 
 
@@ -187,16 +246,25 @@ def export_gallery(
     workspace: Path | None = None,
     face_mode: str = "none",
     people: list[str] | None = None,
+    face_groups: list[str] | None = None,
+    unknown_faces: bool = False,
 ) -> GalleryExportResult:
     if face_mode not in FACE_MODES:
         raise ValueError(f"Unsupported gallery face mode: {face_mode!r}")
 
     person_selectors = people or []
-    people_index: dict[str, list[dict]] = {}
-    if face_mode == "confirmed" or person_selectors:
+    group_selectors = face_groups or []
+    selection_index: dict[str, list[dict]] = {}
+    published_people_index: dict[str, list[dict]] = {}
+    if face_mode != "none" or person_selectors or group_selectors or unknown_faces:
         face_index = FaceSidecarIndex.load(workspace or catalog.db_path.parent)
-        people_index = _people_by_photo(catalog, face_index)
-    person_ids = _resolve_person_ids(people_index, person_selectors)
+        selection_index = _people_by_photo(catalog, face_index, "detected")
+        if face_mode != "none":
+            published_people_index = _people_by_photo(catalog, face_index, face_mode)
+    identity_ids = _resolve_person_ids(selection_index, person_selectors)
+    identity_ids.update(_resolve_group_ids(selection_index, group_selectors))
+    if unknown_faces:
+        identity_ids.add("unknown")
 
     query_ids = None
     if query:
@@ -205,8 +273,8 @@ def export_gallery(
         catalog,
         tags=tags,
         query_ids=query_ids,
-        person_ids=person_ids,
-        people_by_photo=people_index,
+        identity_ids=identity_ids,
+        people_by_photo=selection_index,
     )
 
     if output.exists():
@@ -248,8 +316,8 @@ def export_gallery(
             "dimensions": {"width": photo.width, "height": photo.height},
             "metadata": {"mime_type": photo.mime_type, "gps": {"lat": photo.exif_gps_lat, "lon": photo.exif_gps_lon}},
         }
-        if face_mode == "confirmed":
-            item["people"] = people_index.get(photo.photo_id, [])
+        if face_mode != "none":
+            item["people"] = published_people_index.get(photo.photo_id, [])
         items.append(item)
     source_summary = {
         "query": query,
@@ -258,10 +326,17 @@ def export_gallery(
         "selected": len(photos),
         "skipped": skipped,
     }
-    if face_mode == "confirmed":
+    if face_mode != "none":
         source_summary["people"] = person_selectors
-    elif person_selectors:
-        source_summary["person_filter_count"] = len(person_selectors)
+        source_summary["face_groups"] = group_selectors
+        source_summary["unknown_faces"] = unknown_faces
+    else:
+        if person_selectors:
+            source_summary["person_filter_count"] = len(person_selectors)
+        if group_selectors:
+            source_summary["face_group_filter_count"] = len(group_selectors)
+        if unknown_faces:
+            source_summary["unknown_face_filter"] = True
     doc = build_gallery_document(title, items, source_summary)
     (output / "gallery.json").write_text(json.dumps(doc, indent=2, sort_keys=True), encoding="utf-8")
     _write_gallery_template_files(output, title, min_tag_count, max_cloud_tags, doc)

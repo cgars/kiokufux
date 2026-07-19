@@ -61,7 +61,7 @@ kiokufux init PATH
 kiokufux scan PATH
 kiokufux thumbnails PATH
 kiokufux export-sidecars PATH
-kiokufux export-gallery PATH OUTPUT [--title TITLE] [--query QUERY] [--tag TAG] [--faces none|confirmed] [--person PERSON] [--top-k TOP_K] [--min-tag-count MIN_TAG_COUNT] [--max-cloud-tags MAX_CLOUD_TAGS] [--image-max-size IMAGE_MAX_SIZE] [--overwrite] [--embedding-backend auto|openclip|simple] [--openclip-model MODEL] [--openclip-pretrained WEIGHTS]
+kiokufux export-gallery PATH OUTPUT [--title TITLE] [--query QUERY] [--tag TAG] [--faces none|confirmed|grouped|detected] [--person PERSON] [--face-group GROUP] [--unknown-faces] [--top-k TOP_K] [--min-tag-count MIN_TAG_COUNT] [--max-cloud-tags MAX_CLOUD_TAGS] [--image-max-size IMAGE_MAX_SIZE] [--overwrite] [--embedding-backend auto|openclip|simple] [--openclip-model MODEL] [--openclip-pretrained WEIGHTS]
 
 kiokufux rotate PATH [PHOTO_ID_OR_7_CHAR_PREFIX] (--degrees 90|180|270 | --auto) [--no-backup] [--vlm-fallback] [--vlm-only] [--vlm-verify] [--vlm-compare] [--vlm-backend fake|ollama] [--ollama-url URL] [--ollama-model MODEL] [--vlm-timeout SECONDS]
 kiokufux prompts [--topic all|rotation|vlm-analysis]
@@ -313,9 +313,15 @@ Compact example:
 
 `kiokufux export-gallery PATH OUTPUT` creates a standalone, offline-friendly gallery in `OUTPUT` with `index.html`, `gallery.json`, static CSS/JavaScript assets, copied images, and thumbnails. Open `index.html` directly in a browser; its data, CSS, and JavaScript are embedded, so no local web server is required. The gallery searches filenames, relative paths, VLM captions/descriptions, manual tags, and accepted automatic tags in the browser, and includes a frequency-weighted tag cloud for published tags. Exports from the earlier `fetch("gallery.json")` implementation are detected and replaced automatically; use `--overwrite` to regenerate any other existing export.
 
-Face information is excluded by default. Add `--faces confirmed` to publish only user-confirmed people. The gallery then adds a People filter, includes confirmed names in metadata search, and lists the confirmed people in each photograph's detail view. It exports stable person IDs, display names, and friendly names only: embeddings, face IDs, boxes, detector confidence, model metadata, provisional groups, rejected faces, excluded faces, and conflicts are never included.
+Face information is excluded by default. The optional `--faces` modes progressively add privacy-safe People filters:
 
-Use the repeatable `--person` option to export only photos containing an exact confirmed display name, friendly name, or person ID. Matching is case-insensitive; repeated people are combined with OR, while person selection combines with query and tag filters using AND. `--person` can be used without `--faces confirmed` to create a person-based gallery without publishing identity metadata in the resulting files.
+- `confirmed` publishes user-confirmed people using stable person IDs, display names, and friendly names.
+- `grouped` also publishes non-conflicting provisional recurring groups under their anonymous friendly names and marks them as unconfirmed.
+- `detected` also adds a single **Unknown people** category for photos containing usable ungrouped detections, including only the number found in each photo.
+
+All enabled identities become searchable and appear in the photograph detail view. Raw biometric data and detector internals are never published: embeddings, face IDs, boxes, confidence, model metadata, rejected faces, excluded faces, and conflicting assignments remain private in every mode.
+
+Use repeatable `--person` and `--face-group` selectors to export photos containing an exact confirmed person or provisional group; `--unknown-faces` selects photos with usable ungrouped detections. Identity selectors are combined with OR, while identity selection combines with query and tag filters using AND. These selectors can be used with `--faces none` to create a face-based gallery without publishing any identity metadata or selector values in the resulting files.
 
 Examples:
 
@@ -324,8 +330,11 @@ kiokufux export-gallery ./photos ./gallery-export --title "Family Archive"
 kiokufux export-gallery ./photos ./gallery-export --query "beach" --top-k 25 --overwrite
 kiokufux export-gallery ./photos ./gallery-export --tag beach --tag family
 kiokufux export-gallery ./photos ./gallery-export --faces confirmed
+kiokufux export-gallery ./photos ./gallery-export --faces grouped
+kiokufux export-gallery ./photos ./review-export --faces detected --unknown-faces
 kiokufux export-gallery ./photos ./anna-export --person Anna --faces confirmed
 kiokufux export-gallery ./photos ./family-export --person Anna --person Bert
+kiokufux export-gallery ./photos ./anonymous-group --face-group quiet_fox
 ```
 
 Pending or rejected tag proposals are not included. Use `--min-tag-count` and `--max-cloud-tags` to tune the default cloud, and `--image-max-size` to export downscaled image derivatives instead of original-size copies.

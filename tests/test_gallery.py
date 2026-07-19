@@ -6,7 +6,7 @@ import pytest
 from PIL import Image
 
 from kiokufux.catalog import Catalog
-from kiokufux.faces import FaceDetection, FaceStore, ReviewState, scan_faces
+from kiokufux.faces import FaceDetection, FaceStore, ReviewState, friendly_group_name, scan_faces
 from kiokufux.gallery import EXPORT_FORMAT, SCHEMA, build_gallery_document, export_gallery, published_tags
 from kiokufux.models import Photo
 from kiokufux.scanner import scan as scan_catalog
@@ -141,6 +141,43 @@ def _catalog_with_confirmed_people(root):
     return db, workspace
 
 
+def _catalog_with_face_modes(root):
+    workspace = root / ".kiokufux"
+    db = Catalog(workspace / "catalog.sqlite"); db.init_schema()
+    colors = {
+        "anna.jpg": "red",
+        "grouped.jpg": "blue",
+        "unknown.jpg": "green",
+        "rejected.jpg": "yellow",
+        "excluded.jpg": "purple",
+        "conflict.jpg": "orange",
+    }
+    for name, color in colors.items():
+        Image.new("RGB", (80, 80), color).save(root / name)
+    scan_catalog(root, db, logging.getLogger("test-gallery-face-modes"))
+    with FaceStore(workspace) as store:
+        scan_faces(root, store, GalleryFaceBackend(), minimum_face_size=1)
+        rows = store.db.execute("SELECT face_id,image_path FROM face_occurrences ORDER BY image_path").fetchall()
+        faces = {row["image_path"]: row["face_id"] for row in rows}
+        run_id = "gallery-test-run"
+        store.db.execute("INSERT INTO cluster_runs VALUES(?,?,?,?)", (run_id, "fake:gallery:1:1:3", "{}", "2026-01-01T00:00:00Z"))
+        for group_id, filename, conflict in (
+            ("recurring-group", "grouped.jpg", 0),
+            ("conflicting-group", "conflict.jpg", 1),
+        ):
+            face_id = next(face_id for path, face_id in faces.items() if path.endswith(filename))
+            store.db.execute("INSERT INTO face_groups VALUES(?,?,?,?,?)", (group_id, run_id, face_id, "unreviewed", conflict))
+            store.db.execute("INSERT INTO face_group_members VALUES(?,?,?)", (group_id, face_id, None))
+        store.db.commit()
+
+    face_id_for = lambda filename: next(face_id for path, face_id in faces.items() if path.endswith(filename))
+    state = ReviewState(workspace)
+    state.create_person([face_id_for("anna.jpg")], "Anna", friendly_name="quiet_fox")
+    state.record_action("reject-face", [face_id_for("rejected.jpg")])
+    state.record_action("exclude-from-clustering", [face_id_for("excluded.jpg")])
+    return db, workspace
+
+
 def test_export_gallery_can_include_confirmed_people_without_biometric_data(tmp_path):
     db, workspace = _catalog_with_confirmed_people(tmp_path)
 
@@ -188,3 +225,65 @@ def test_unknown_person_does_not_replace_existing_gallery(tmp_path):
         export_gallery(db, output, workspace=workspace, people=["Missing"], overwrite=True)
 
     assert marker.read_text() == "keep"
+
+
+def test_grouped_face_mode_adds_non_conflicting_anonymous_groups(tmp_path):
+    db, workspace = _catalog_with_face_modes(tmp_path)
+
+    export_gallery(db, tmp_path / "out", workspace=workspace, face_mode="grouped")
+
+    doc = json.loads((tmp_path / "out" / "gallery.json").read_text())
+    people = doc["people_frequencies"]
+    assert [(person["label"], person["status"]) for person in people] == [
+        ("Anna", "confirmed"),
+        (friendly_group_name("recurring-group"), "provisional"),
+    ]
+    provisional = next(person for person in people if person["status"] == "provisional")
+    assert provisional["review_state"] == "unreviewed"
+    assert provisional["identity_id"] == "group:recurring-group"
+    assert "Unknown people" not in json.dumps(doc)
+    assert friendly_group_name("conflicting-group") not in json.dumps(doc)
+
+
+def test_detected_face_mode_adds_aggregate_unknown_filter_but_not_private_face_data(tmp_path):
+    db, workspace = _catalog_with_face_modes(tmp_path)
+
+    export_gallery(db, tmp_path / "out", workspace=workspace, face_mode="detected")
+
+    doc = json.loads((tmp_path / "out" / "gallery.json").read_text())
+    unknown = next(person for person in doc["people_frequencies"] if person["identity_id"] == "unknown")
+    assert unknown == {"identity_id": "unknown", "label": "Unknown people", "status": "ungrouped", "count": 1}
+    unknown_item = next(item for item in doc["items"] if item["filename"] == "unknown.jpg")
+    assert unknown_item["people"] == [{
+        "identity_id": "unknown",
+        "label": "Unknown people",
+        "status": "ungrouped",
+        "count_in_photo": 1,
+    }]
+    for filename in ("rejected.jpg", "excluded.jpg", "conflict.jpg"):
+        assert next(item for item in doc["items"] if item["filename"] == filename)["people"] == []
+    serialized = json.dumps(doc)
+    for forbidden in ("face_id", "box", "detection_confidence", "embedding", "model_key"):
+        assert forbidden not in serialized
+
+
+def test_face_group_and_unknown_filters_work_without_publishing_identity_metadata(tmp_path):
+    db, workspace = _catalog_with_face_modes(tmp_path)
+    group_name = friendly_group_name("recurring-group")
+
+    result = export_gallery(
+        db,
+        tmp_path / "out",
+        workspace=workspace,
+        face_groups=[group_name],
+        unknown_faces=True,
+    )
+
+    assert result.exported == 2
+    doc = json.loads((tmp_path / "out" / "gallery.json").read_text())
+    assert {item["filename"] for item in doc["items"]} == {"grouped.jpg", "unknown.jpg"}
+    assert all("people" not in item for item in doc["items"])
+    assert doc["people_frequencies"] == []
+    assert doc["source_summary"]["face_group_filter_count"] == 1
+    assert doc["source_summary"]["unknown_face_filter"] is True
+    assert group_name not in json.dumps(doc)

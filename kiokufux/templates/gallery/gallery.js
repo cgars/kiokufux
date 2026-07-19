@@ -3,7 +3,7 @@ let data;
 let all = [];
 let shown = [];
 let selectedTag = "";
-let selectedPersonId = "";
+let selectedIdentityId = "";
 let currentIndex = 0;
 let lastTrigger = null;
 let touchStartX = 0;
@@ -59,10 +59,25 @@ function setActiveTag(tag) {
   applyFilters();
 }
 
-function setActivePerson(personId) {
-  selectedPersonId = selectedPersonId === personId ? "" : personId;
+function identityKey(person) {
+  return person.identity_id || (person.person_id ? `person:${person.person_id}` : "");
+}
+
+function identityStatusLabel(person) {
+  if (person.status === "provisional") return "unconfirmed";
+  if (person.status === "ungrouped") return "detected";
+  return "";
+}
+
+function identityAvatar(person) {
+  if (person.status === "ungrouped") return "?";
+  return person.label.trim().charAt(0).toLocaleUpperCase() || "•";
+}
+
+function setActivePerson(identityId) {
+  selectedIdentityId = selectedIdentityId === identityId ? "" : identityId;
   [...peopleCloud.children].forEach((child) => {
-    const active = child.dataset.personId === selectedPersonId;
+    const active = child.dataset.identityId === selectedIdentityId;
     child.classList.toggle("active", active);
     child.setAttribute("aria-pressed", String(active));
   });
@@ -70,7 +85,7 @@ function setActivePerson(personId) {
 }
 
 function selectedPersonLabel() {
-  return (data.people_frequencies || []).find((person) => person.person_id === selectedPersonId)?.label || selectedPersonId;
+  return (data.people_frequencies || []).find((person) => identityKey(person) === selectedIdentityId)?.label || selectedIdentityId;
 }
 
 function makeCard(item, index) {
@@ -113,7 +128,7 @@ function applyFilters() {
   const query = queryInput.value.trim().toLocaleLowerCase().replace(/\s+/g, " ");
   shown = all.filter((item) => {
     const tagMatches = !selectedTag || (item.tags || []).includes(selectedTag);
-    const personMatches = !selectedPersonId || (item.people || []).some((person) => person.person_id === selectedPersonId);
+    const personMatches = !selectedIdentityId || (item.people || []).some((person) => identityKey(person) === selectedIdentityId);
     const queryMatches = !query || searchableText(item).includes(query);
     return tagMatches && personMatches && queryMatches;
   });
@@ -121,9 +136,9 @@ function applyFilters() {
   const filters = [];
   if (query) filters.push(`matching “${query}”`);
   if (selectedTag) filters.push(`tagged “${selectedTag}”`);
-  if (selectedPersonId) filters.push(`with “${selectedPersonLabel()}”`);
+  if (selectedIdentityId) filters.push(`with “${selectedPersonLabel()}”`);
   state.textContent = `${shown.length} ${shown.length === 1 ? "photograph" : "photographs"}${filters.length ? ` ${filters.join(" and ")}` : ` in this collection`}`;
-  clearButton.hidden = !query && !selectedTag && !selectedPersonId;
+  clearButton.hidden = !query && !selectedTag && !selectedIdentityId;
   empty.hidden = shown.length !== 0;
   grid.hidden = shown.length === 0;
   grid.replaceChildren(...shown.map(makeCard));
@@ -158,21 +173,29 @@ function buildPeopleCloud() {
   people.forEach((person) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "person-chip";
-    button.dataset.personId = person.person_id;
+    button.className = `person-chip person-${person.status || "confirmed"}`;
+    button.dataset.identityId = identityKey(person);
     button.setAttribute("aria-pressed", "false");
+    const statusLabel = identityStatusLabel(person);
+    button.title = statusLabel ? `${person.label} · ${statusLabel}` : person.label;
 
     const avatar = document.createElement("span");
     avatar.className = "person-avatar";
-    avatar.textContent = person.label.trim().charAt(0).toLocaleUpperCase() || "•";
+    avatar.textContent = identityAvatar(person);
     avatar.setAttribute("aria-hidden", "true");
     const label = document.createElement("span");
     label.textContent = person.label;
+    if (statusLabel) {
+      const status = document.createElement("span");
+      status.className = "person-status";
+      status.textContent = statusLabel;
+      label.appendChild(status);
+    }
     const amount = document.createElement("span");
     amount.className = "tag-count";
     amount.textContent = person.count;
     button.append(avatar, label, amount);
-    button.addEventListener("click", () => setActivePerson(person.person_id));
+    button.addEventListener("click", () => setActivePerson(identityKey(person)));
     peopleCloud.appendChild(button);
   });
 }
@@ -203,17 +226,26 @@ function showItem(index) {
     const button = document.createElement("button");
     button.type = "button";
     button.title = `Show photographs with ${person.label}`;
+    button.className = `person-${person.status || "confirmed"}`;
     const avatar = document.createElement("span");
     avatar.className = "person-avatar";
-    avatar.textContent = person.label.trim().charAt(0).toLocaleUpperCase() || "•";
+    avatar.textContent = identityAvatar(person);
     avatar.setAttribute("aria-hidden", "true");
     const label = document.createElement("span");
-    label.textContent = person.label;
+    const count = person.status === "ungrouped" && person.count_in_photo > 1 ? ` · ${person.count_in_photo}` : "";
+    label.textContent = `${person.label}${count}`;
+    const statusLabel = identityStatusLabel(person);
+    if (statusLabel) {
+      const status = document.createElement("span");
+      status.className = "person-status";
+      status.textContent = statusLabel;
+      label.appendChild(status);
+    }
     button.append(avatar, label);
     button.addEventListener("click", () => {
       box.close();
-      selectedPersonId = "";
-      setActivePerson(person.person_id);
+      selectedIdentityId = "";
+      setActivePerson(identityKey(person));
       document.querySelector(".controls").scrollIntoView({ behavior: "smooth", block: "start" });
     });
     detailPeople.appendChild(button);
@@ -258,7 +290,7 @@ function moveLightbox(delta) {
 function clearFilters() {
   queryInput.value = "";
   selectedTag = "";
-  selectedPersonId = "";
+  selectedIdentityId = "";
   [...cloud.children].forEach((child) => {
     child.classList.remove("active");
     child.setAttribute("aria-pressed", "false");

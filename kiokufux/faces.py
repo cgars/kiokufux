@@ -229,8 +229,15 @@ def cluster_faces(store: FaceStore, *, min_cluster_size: int = 2, min_samples: i
     for key, compatible in by_key.items():
         vectors = np.stack([np.frombuffer(r["embedding"], dtype="<f4") for r in compatible])
         try:
-            from sklearn.cluster import HDBSCAN
-            labels = HDBSCAN(min_cluster_size=min_cluster_size, min_samples=min_samples, metric="euclidean").fit_predict(vectors)
+            try:
+                from hdbscan import HDBSCAN  # type: ignore
+            except ImportError:
+                from sklearn.cluster import HDBSCAN  # type: ignore[attr-defined]
+            labels = HDBSCAN(
+                min_cluster_size=min_cluster_size,
+                min_samples=min_samples,
+                metric="euclidean",
+            ).fit_predict(vectors)
         except (ImportError, AttributeError):
             # Conservative dependency-light fallback: connected components at a tight L2 threshold.
             labels = np.full(len(vectors), -1); next_label = 0

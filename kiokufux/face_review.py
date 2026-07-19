@@ -830,6 +830,21 @@ def _merge_people(state: ReviewState, source_person_id: str, target_person_id: s
     return dict(target)
 
 
+_CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
+
+
+def _send_response_body(handler: BaseHTTPRequestHandler, status: int, content_type: str, data: bytes) -> None:
+    """Send an HTTP response body, ignoring clients that disconnect mid-write."""
+    try:
+        handler.send_response(status)
+        handler.send_header("Content-Type", content_type)
+        handler.send_header("Content-Length", str(len(data)))
+        handler.end_headers()
+        handler.wfile.write(data)
+    except _CLIENT_DISCONNECT_ERRORS:
+        return
+
+
 def make_server(root: Path, workspace: Path, host: str = "127.0.0.1", port: int = 0):
     if host not in {"127.0.0.1", "::1", "localhost"}:
         raise ValueError("face review may only bind to loopback")
@@ -841,32 +856,23 @@ def make_server(root: Path, workspace: Path, host: str = "127.0.0.1", port: int 
     class Handler(BaseHTTPRequestHandler):
         def handle(self):
             with state_lock:
-                super().handle()
+                try:
+                    super().handle()
+                except _CLIENT_DISCONNECT_ERRORS:
+                    return
 
         def send_json(self, value, status=200):
             data = json.dumps(value).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
+            _send_response_body(self, status, "application/json", data)
 
         def send_jpeg(self, data: bytes):
-            self.send_response(200)
-            self.send_header("Content-Type", "image/jpeg")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
+            _send_response_body(self, 200, "image/jpeg", data)
 
         def do_GET(self):
             route = urlparse(self.path).path
             if route == "/":
                 data = HTML.encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
+                _send_response_body(self, 200, "text/html; charset=utf-8", data)
                 return
             if route == "/api/status":
                 return self.send_json({"collection_id": state.review["collection_id"], "local_only": True})

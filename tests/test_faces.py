@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from kiokufux.face_review import make_server, safe_collection_path
+from kiokufux.face_review import _send_response_body, make_server, safe_collection_path
 from kiokufux.faces import (FaceDetection, FaceStore, ReviewState, boxes_iou,
     cluster_faces, friendly_group_name, normalize_embeddings, scan_faces)
 
@@ -75,6 +75,33 @@ def test_path_traversal_and_iou(tmp_path):
     else:
         raise AssertionError("traversal accepted")
     assert boxes_iou((0, 0, 1, 1), (0, 0, 1, 1)) == 1
+
+def test_review_response_ignores_client_disconnects():
+    class BrokenWriter:
+        def write(self, _data):
+            raise BrokenPipeError("client closed")
+
+    class Handler:
+        wfile = BrokenWriter()
+
+        def __init__(self):
+            self.calls = []
+
+        def send_response(self, status):
+            self.calls.append(("status", status))
+
+        def send_header(self, name, value):
+            self.calls.append(("header", name, value))
+
+        def end_headers(self):
+            self.calls.append(("end",))
+
+    handler = Handler()
+
+    _send_response_body(handler, 200, "image/jpeg", b"jpeg")
+
+    assert ("status", 200) in handler.calls
+    assert ("header", "Content-Length", "4") in handler.calls
 
 
 def test_threaded_review_server_uses_request_local_sqlite_connections(tmp_path):

@@ -315,6 +315,8 @@ Compact example:
 
 During export, source photographs are located from the current collection `PATH` and their indexed relative paths first. The stored absolute path is only a compatibility fallback, so moving the whole collection between drives, mount points, or machines does not require a rescan when its internal directory structure remains unchanged. Relative paths are constrained to the collection root.
 
+If a source cannot be found or copied, the exporter records the photo and exact error in `.kiokufux/logs/kiokufux.log`; add `-v` to show the warning in the terminal. A thumbnail-generation failure no longer drops an otherwise exported photograph: the gallery uses its exported image as the preview instead.
+
 Face information is excluded by default. The optional `--faces` modes progressively add privacy-safe People filters:
 
 - `confirmed` publishes user-confirmed people using stable person IDs, display names, and friendly names.

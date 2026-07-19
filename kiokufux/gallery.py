@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -20,6 +21,7 @@ from .sidecar import FaceSidecarIndex
 SCHEMA = "kiokufux.gallery.v1"
 EXPORT_FORMAT = "kiokufux-gallery-inline-v1"
 FACE_MODES = {"none", "confirmed", "grouped", "detected"}
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -51,8 +53,11 @@ def _write_thumbnail(photo: Photo, source: Path, dst: Path, catalog: Catalog) ->
     if photo.thumbnail_path:
         thumb = catalog.artifact_path(photo.thumbnail_path)
         if thumb.exists():
-            shutil.copy2(thumb, dst)
-            return
+            try:
+                shutil.copy2(thumb, dst)
+                return
+            except OSError:
+                pass
     with Image.open(source) as img:
         fixed = ImageOps.exif_transpose(img)
         fixed.thumbnail((360, 360), Image.Resampling.LANCZOS)
@@ -310,6 +315,13 @@ def export_gallery(
     for photo in photos:
         source = _source_path(photo, source_root)
         if source is None:
+            logger.warning(
+                "Skipping gallery photo %s (%s): source not found at relative path %s or indexed path %s",
+                photo.photo_id,
+                photo.relative_path,
+                source_root / photo.relative_path,
+                photo.source_path,
+            )
             skipped += 1
             continue
         image_ext = ".jpg" if image_max_size else (source.suffix or ".jpg")
@@ -317,10 +329,29 @@ def export_gallery(
         thumb_rel = f"thumbnails/{photo.photo_id}.jpg"
         try:
             _copy_image(source, output / image_rel, image_max_size=image_max_size)
-            _write_thumbnail(photo, source, output / thumb_rel, catalog)
-        except Exception:
+        except Exception as exc:
+            (output / image_rel).unlink(missing_ok=True)
+            logger.warning(
+                "Skipping gallery photo %s (%s): source export failed with %s: %s",
+                photo.photo_id,
+                source,
+                type(exc).__name__,
+                exc,
+            )
             skipped += 1
             continue
+        try:
+            _write_thumbnail(photo, source, output / thumb_rel, catalog)
+        except Exception as exc:
+            (output / thumb_rel).unlink(missing_ok=True)
+            thumb_rel = image_rel
+            logger.warning(
+                "Gallery thumbnail failed for %s (%s) with %s: %s; using the exported image as its preview",
+                photo.photo_id,
+                source,
+                type(exc).__name__,
+                exc,
+            )
         analysis = catalog.get_image_analysis(photo.photo_id)
         caption = analysis.caption if analysis else None
         description = analysis.description if analysis else None

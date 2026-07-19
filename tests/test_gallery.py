@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+import kiokufux.gallery as gallery_module
 from kiokufux.catalog import Catalog
 from kiokufux.faces import FaceDetection, FaceStore, ReviewState, friendly_group_name, scan_faces
 from kiokufux.gallery import EXPORT_FORMAT, SCHEMA, build_gallery_document, export_gallery, published_tags
@@ -107,7 +108,7 @@ def test_export_gallery_falls_back_to_indexed_absolute_path(tmp_path):
     assert result.skipped == 0
 
 
-def test_export_gallery_rejects_relative_paths_outside_collection(tmp_path):
+def test_export_gallery_rejects_relative_paths_outside_collection(tmp_path, caplog):
     collection = tmp_path / "collection"
     collection.mkdir()
     outside = tmp_path / "outside.jpg"
@@ -115,10 +116,51 @@ def test_export_gallery_rejects_relative_paths_outside_collection(tmp_path):
     db = Catalog(collection / ".kiokufux" / "catalog.sqlite"); db.init_schema()
     db.upsert_photo(Photo("id", tmp_path / "missing.jpg", "../outside.jpg", "hash"))
 
-    result = export_gallery(db, tmp_path / "out", collection_root=collection)
+    with caplog.at_level(logging.WARNING, logger="kiokufux.gallery"):
+        result = export_gallery(db, tmp_path / "out", collection_root=collection)
 
     assert result.exported == 0
     assert result.skipped == 1
+    assert "source not found" in caplog.text
+    assert "../outside.jpg" in caplog.text
+
+
+def test_export_gallery_uses_exported_image_when_thumbnail_creation_fails(tmp_path, monkeypatch, caplog):
+    db = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite"); db.init_schema()
+    image = tmp_path / "photo.jpg"
+    _image(image)
+    db.upsert_photo(Photo("id", image, "photo.jpg", "hash"))
+
+    def fail_thumbnail(*_args, **_kwargs):
+        raise OSError("thumbnail decoder failed")
+
+    monkeypatch.setattr(gallery_module, "_write_thumbnail", fail_thumbnail)
+    with caplog.at_level(logging.WARNING, logger="kiokufux.gallery"):
+        result = export_gallery(db, tmp_path / "out")
+
+    doc = json.loads((tmp_path / "out" / "gallery.json").read_text())
+    assert result.exported == 1
+    assert result.skipped == 0
+    assert doc["items"][0]["thumbnail_path"] == doc["items"][0]["image_path"]
+    assert "using the exported image as its preview" in caplog.text
+
+
+def test_export_gallery_logs_source_export_failure(tmp_path, monkeypatch, caplog):
+    db = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite"); db.init_schema()
+    image = tmp_path / "photo.jpg"
+    _image(image)
+    db.upsert_photo(Photo("id", image, "photo.jpg", "hash"))
+
+    def fail_copy(*_args, **_kwargs):
+        raise PermissionError("destination blocked")
+
+    monkeypatch.setattr(gallery_module, "_copy_image", fail_copy)
+    with caplog.at_level(logging.WARNING, logger="kiokufux.gallery"):
+        result = export_gallery(db, tmp_path / "out")
+
+    assert result.exported == 0
+    assert result.skipped == 1
+    assert "PermissionError: destination blocked" in caplog.text
 
 
 def test_export_gallery_safely_embeds_markup_in_metadata(tmp_path):

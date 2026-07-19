@@ -68,6 +68,7 @@ def test_person_rename_preserves_id_and_atomic_json(tmp_path):
 
 def test_path_traversal_and_iou(tmp_path):
     assert safe_collection_path(tmp_path, "photo.jpg") == tmp_path / "photo.jpg"
+    assert safe_collection_path(tmp_path, r"nested\photo.jpg") == tmp_path / "nested" / "photo.jpg"
     try:
         safe_collection_path(tmp_path, "../secret")
     except ValueError:
@@ -122,6 +123,32 @@ def test_threaded_review_server_uses_request_local_sqlite_connections(tmp_path):
         for client in clients:
             client.join()
         assert responses == [[], [], [], []]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_review_source_image_route_accepts_windows_relative_paths(tmp_path):
+    image_path = tmp_path / "nested" / "photo.jpg"
+    image_path.parent.mkdir()
+    Image.new("RGB", (100, 100), "red").save(image_path)
+    workspace = tmp_path / ".kiokufux"
+    with FaceStore(workspace) as store:
+        scan_faces(tmp_path, store, FakeBackend(), minimum_face_size=1)
+        row = store.db.execute("SELECT image_id FROM face_occurrences LIMIT 1").fetchone()
+        store.db.execute("UPDATE face_occurrences SET image_path=? WHERE image_id=?", (r"nested\photo.jpg", row["image_id"]))
+        store.db.commit()
+
+    server = make_server(tmp_path, workspace)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}/api/images/{row['image_id']}/thumbnail"
+        with urllib.request.urlopen(url, timeout=2) as response:
+            assert response.status == 200
+            assert response.headers["Content-Type"] == "image/jpeg"
+            assert response.read().startswith(b"\xff\xd8")
     finally:
         server.shutdown()
         server.server_close()

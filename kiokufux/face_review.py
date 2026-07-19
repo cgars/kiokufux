@@ -7,7 +7,7 @@ import uuid
 import webbrowser
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from urllib.parse import urlparse
 
 from PIL import Image, ImageOps
@@ -765,7 +765,12 @@ start().catch(e=>notify(e.message,'error'));
 
 
 def safe_collection_path(root: Path, candidate: str) -> Path:
-    resolved = (root / candidate).resolve()
+    windows_candidate = PureWindowsPath(candidate)
+    native_candidate = Path(candidate)
+    if windows_candidate.anchor:
+        raise ValueError("path leaves collection")
+    relative_candidate = Path(*windows_candidate.parts) if "\\" in candidate else native_candidate
+    resolved = (root / relative_candidate).resolve()
     if not resolved.is_relative_to(root.resolve()):
         raise ValueError("path leaves collection")
     return resolved
@@ -898,9 +903,9 @@ def make_server(root: Path, workspace: Path, host: str = "127.0.0.1", port: int 
                     row = store.db.execute("SELECT image_path FROM face_occurrences WHERE image_id=? LIMIT 1", (parts[2],)).fetchone()
                     if not row:
                         return self.send_json({"error": "image not found"}, 404)
-                    stored_path = Path(row["image_path"])
-                    path = (root / stored_path).resolve() if not stored_path.is_absolute() else stored_path.resolve()
-                    if not path.is_relative_to(root.resolve()):
+                    try:
+                        path = safe_collection_path(root, str(row["image_path"]))
+                    except ValueError:
                         return self.send_json({"error": "image outside collection"}, 403)
                     try:
                         with Image.open(path) as image:

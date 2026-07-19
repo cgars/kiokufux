@@ -72,6 +72,19 @@ def test_privacy_notice_for_openclip_backend_mentions_weight_download_only():
     assert "download model weights" in notice
 
 
+def test_setup_logging_keeps_child_loggers_capturable(tmp_path):
+    import logging
+    from kiokufux.cli import _setup_logging
+
+    workspace = tmp_path / ".kiokufux"
+    (workspace / "logs").mkdir(parents=True)
+
+    _setup_logging(workspace)
+
+    assert logging.getLogger("kiokufux").propagate is True
+    assert logging.getLogger("kiokufux.gallery").propagate is True
+
+
 def test_parser_accepts_verbose_flag_before_command(tmp_path):
     from kiokufux.cli import _build_parser
 

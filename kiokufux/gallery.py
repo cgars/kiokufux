@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import html
+import hashlib
 import json
 import logging
 import math
+import re
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -35,9 +37,22 @@ class GalleryExportResult:
     output: Path
 
 
+def _safe_filename_component(value: str) -> str:
+    """Return one portable path segment for generated gallery media filenames."""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._-")
+    if cleaned == value and cleaned:
+        return cleaned
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+    return f"{cleaned or 'photo'}-{digest}"
+
+
+def _safe_extension(value: str | None) -> str:
+    suffix = (value or ".jpg").lower()
+    return suffix if re.fullmatch(r"\.[a-z0-9]{1,12}", suffix) else ".jpg"
+
+
 def _safe_name(photo: Photo, suffix: str | None = None) -> str:
-    ext = suffix or photo.source_path.suffix or ".jpg"
-    return f"{photo.photo_id}{ext.lower()}"
+    return f"{_safe_filename_component(photo.photo_id)}{_safe_extension(suffix or photo.source_path.suffix)}"
 
 
 def _copy_image(src: Path, dst: Path, image_max_size: int | None = None) -> None:
@@ -509,7 +524,7 @@ def export_gallery(
             continue
         image_ext = ".jpg" if image_max_size else (source.suffix or ".jpg")
         image_rel = f"images/{_safe_name(photo, image_ext)}"
-        thumb_rel = f"thumbnails/{photo.photo_id}.jpg"
+        thumb_rel = f"thumbnails/{_safe_name(photo, '.jpg')}"
         try:
             _copy_image(source, output / image_rel, image_max_size=image_max_size)
         except Exception as exc:

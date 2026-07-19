@@ -44,7 +44,10 @@ def _catalog(root: Path) -> tuple[Path, Catalog]:
 def _setup_logging(ws: Path, verbose: int = 0) -> logging.Logger:
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(logging.DEBUG)
-    logger.propagate = False
+    # Keep propagation enabled so callers and test harnesses that attach root
+    # logging handlers (for example pytest's caplog) can still observe records
+    # from child loggers after CLI commands configure file/console handlers.
+    logger.propagate = True
     logger.handlers.clear()
 
     file_handler = logging.FileHandler(ws / "logs" / "kiokufux.log")

@@ -4,110 +4,232 @@ let all = [];
 let shown = [];
 let selectedTag = "";
 let currentIndex = 0;
+let lastTrigger = null;
+let touchStartX = 0;
 
 const queryInput = document.querySelector("#q");
+const clearButton = document.querySelector("#clear");
 const grid = document.querySelector("#grid");
 const state = document.querySelector("#state");
 const cloud = document.querySelector("#cloud");
 const empty = document.querySelector("#empty");
 const box = document.querySelector("#box");
+const fullImage = document.querySelector("#full");
+const caption = document.querySelector("#cap");
+const description = document.querySelector("#description");
+const position = document.querySelector("#position");
+const detailTags = document.querySelector("#detail-tags");
+const details = document.querySelector("#details");
 
 function searchableText(item) {
   return [item.filename, item.relative_path, item.caption, item.description, ...(item.tags || [])]
+    .filter(Boolean)
     .join(" ")
-    .toLowerCase()
+    .toLocaleLowerCase()
     .replace(/\s+/g, " ");
 }
 
 function altText(item) {
-  return item.caption || item.description || item.filename;
+  return item.caption || item.description || item.filename || "Archive photograph";
+}
+
+function displayDate(value) {
+  if (!value) return "";
+  const exif = value.match(/^(\d{4}):(\d{2}):(\d{2})(?:\s+(\d{2}):(\d{2}):(\d{2}))?/);
+  const parsed = exif
+    ? new Date(Number(exif[1]), Number(exif[2]) - 1, Number(exif[3]), Number(exif[4] || 0), Number(exif[5] || 0), Number(exif[6] || 0))
+    : new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" }).format(parsed);
+}
+
+function setActiveTag(tag) {
+  selectedTag = selectedTag === tag ? "" : tag;
+  [...cloud.children].forEach((child) => {
+    const active = child.dataset.tag === selectedTag;
+    child.classList.toggle("active", active);
+    child.setAttribute("aria-pressed", String(active));
+  });
+  applyFilters();
+}
+
+function makeCard(item, index) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "card";
+  button.setAttribute("aria-label", `Open ${altText(item)}`);
+
+  const image = document.createElement("img");
+  image.loading = "lazy";
+  image.decoding = "async";
+  image.src = item.thumbnail_path;
+  image.alt = "";
+  button.appendChild(image);
+
+  const copy = document.createElement("span");
+  copy.className = "card-copy";
+
+  const title = document.createElement("span");
+  title.className = "card-title";
+  title.textContent = item.caption || item.filename;
+  copy.appendChild(title);
+
+  const metadata = document.createElement("span");
+  metadata.className = "card-meta";
+  const previewTags = (item.tags || []).slice(0, 2).join(" · ");
+  metadata.textContent = [displayDate(item.datetime_original), previewTags].filter(Boolean).join("  —  ") || "View photograph";
+  copy.appendChild(metadata);
+  button.appendChild(copy);
+
+  button.addEventListener("click", () => {
+    lastTrigger = button;
+    openLightbox(index);
+  });
+  return button;
 }
 
 function applyFilters() {
-  const query = queryInput.value.trim().toLowerCase().replace(/\s+/g, " ");
+  const query = queryInput.value.trim().toLocaleLowerCase().replace(/\s+/g, " ");
   shown = all.filter((item) => {
-    const tagMatches = !selectedTag || item.tags.includes(selectedTag);
+    const tagMatches = !selectedTag || (item.tags || []).includes(selectedTag);
     const queryMatches = !query || searchableText(item).includes(query);
     return tagMatches && queryMatches;
   });
 
-  state.textContent = `${shown.length} of ${all.length} photos${query ? ` · search: "${query}"` : ""}${selectedTag ? ` · tag: ${selectedTag}` : ""}`;
+  const filters = [];
+  if (query) filters.push(`matching “${query}”`);
+  if (selectedTag) filters.push(`tagged “${selectedTag}”`);
+  state.textContent = `${shown.length} ${shown.length === 1 ? "photograph" : "photographs"}${filters.length ? ` ${filters.join(" and ")}` : ` in this collection`}`;
+  clearButton.hidden = !query && !selectedTag;
   empty.hidden = shown.length !== 0;
-  grid.innerHTML = "";
-  shown.forEach((item, index) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "card";
-
-    const image = document.createElement("img");
-    image.loading = "lazy";
-    image.src = item.thumbnail_path;
-    image.alt = altText(item);
-    button.appendChild(image);
-
-    const label = document.createElement("span");
-    label.textContent = item.caption || item.filename;
-    button.appendChild(label);
-
-    button.addEventListener("click", () => openLightbox(index));
-    grid.appendChild(button);
-  });
+  grid.hidden = shown.length === 0;
+  grid.replaceChildren(...shown.map(makeCard));
 }
 
 function buildTagCloud() {
-  const entries = Object.entries(data.tag_frequencies)
+  const entries = Object.entries(data.tag_frequencies || {})
     .filter((entry) => entry[1] >= config.minTagCount)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, config.maxCloudTags);
-  const maxCount = Math.max(1, ...entries.map((entry) => entry[1]));
 
   entries.forEach(([tag, count]) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = `${tag} · ${count}`;
-    button.style.fontSize = `${0.9 + (Math.log(count + 1) / Math.log(maxCount + 1)) * 0.9}rem`;
-    button.addEventListener("click", () => {
-      selectedTag = selectedTag === tag ? "" : tag;
-      [...cloud.children].forEach((child) => child.classList.toggle("active", child === button && Boolean(selectedTag)));
-      applyFilters();
-    });
+    button.dataset.tag = tag;
+    button.setAttribute("aria-pressed", "false");
+
+    const label = document.createElement("span");
+    label.textContent = tag;
+    const amount = document.createElement("span");
+    amount.className = "tag-count";
+    amount.textContent = count;
+    button.append(label, amount);
+    button.addEventListener("click", () => setActiveTag(tag));
     cloud.appendChild(button);
   });
 }
 
-function openLightbox(index) {
+function addDetail(label, value) {
+  if (!value) return;
+  const term = document.createElement("dt");
+  term.textContent = label;
+  const definition = document.createElement("dd");
+  definition.textContent = value;
+  details.append(term, definition);
+}
+
+function showItem(index) {
   currentIndex = index;
   const item = shown[currentIndex];
-  document.querySelector("#full").src = item.image_path;
-  document.querySelector("#full").alt = altText(item);
-  document.querySelector("#cap").textContent = item.caption || item.filename;
-  document.querySelector("#detail").textContent = [item.description, (item.tags || []).join(", "), item.datetime_original]
-    .filter(Boolean)
-    .join(" · ");
-  box.showModal();
+  if (!item) return;
+
+  fullImage.src = item.image_path;
+  fullImage.alt = altText(item);
+  caption.textContent = item.caption || item.filename;
+  description.textContent = item.description || "";
+  position.textContent = `Photograph ${currentIndex + 1} of ${shown.length}`;
+
+  detailTags.replaceChildren();
+  (item.tags || []).forEach((tag) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = tag;
+    button.title = `Filter gallery by ${tag}`;
+    button.addEventListener("click", () => {
+      box.close();
+      selectedTag = "";
+      setActiveTag(tag);
+      document.querySelector(".controls").scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    detailTags.appendChild(button);
+  });
+
+  details.replaceChildren();
+  addDetail("Date", displayDate(item.datetime_original));
+  addDetail("File", item.filename);
+  if (item.dimensions?.width && item.dimensions?.height) {
+    addDetail("Size", `${item.dimensions.width} × ${item.dimensions.height}`);
+  }
+  if (item.metadata?.gps?.lat != null && item.metadata?.gps?.lon != null) {
+    addDetail("Location", `${Number(item.metadata.gps.lat).toFixed(5)}, ${Number(item.metadata.gps.lon).toFixed(5)}`);
+  }
+}
+
+function openLightbox(index) {
+  showItem(index);
+  if (!box.open) box.showModal();
 }
 
 function moveLightbox(delta) {
   if (!shown.length) return;
-  openLightbox((currentIndex + delta + shown.length) % shown.length);
+  showItem((currentIndex + delta + shown.length) % shown.length);
 }
 
-document.querySelector("#clear").addEventListener("click", () => {
+function clearFilters() {
   queryInput.value = "";
   selectedTag = "";
-  [...cloud.children].forEach((child) => child.classList.remove("active"));
+  [...cloud.children].forEach((child) => {
+    child.classList.remove("active");
+    child.setAttribute("aria-pressed", "false");
+  });
   applyFilters();
-});
+  queryInput.focus();
+}
+
+clearButton.addEventListener("click", clearFilters);
+document.querySelector("#empty-clear").addEventListener("click", clearFilters);
 document.querySelector("#close").addEventListener("click", () => box.close());
 document.querySelector("#prev").addEventListener("click", () => moveLightbox(-1));
 document.querySelector("#next").addEventListener("click", () => moveLightbox(1));
+document.querySelector("#density").addEventListener("click", (event) => {
+  const compact = grid.classList.toggle("compact");
+  event.currentTarget.setAttribute("aria-pressed", String(compact));
+  event.currentTarget.title = compact ? "Show larger photos" : "Show smaller photos";
+});
+
+box.addEventListener("click", (event) => {
+  if (event.target === box) box.close();
+});
+box.addEventListener("close", () => lastTrigger?.focus());
+box.addEventListener("touchstart", (event) => {
+  touchStartX = event.changedTouches[0].clientX;
+}, { passive: true });
+box.addEventListener("touchend", (event) => {
+  const distance = event.changedTouches[0].clientX - touchStartX;
+  if (Math.abs(distance) > 60) moveLightbox(distance > 0 ? -1 : 1);
+}, { passive: true });
+
 document.addEventListener("keydown", (event) => {
   if (box.open && event.key === "ArrowLeft") moveLightbox(-1);
   if (box.open && event.key === "ArrowRight") moveLightbox(1);
+  if (!box.open && event.key === "/" && document.activeElement !== queryInput) {
+    event.preventDefault();
+    queryInput.focus();
+  }
 });
 queryInput.addEventListener("input", applyFilters);
 
 data = JSON.parse(document.querySelector("#gallery-data").textContent);
-all = data.items;
+all = Array.isArray(data.items) ? data.items : [];
 buildTagCloud();
 applyFilters();

@@ -1,5 +1,6 @@
 import json
 import logging
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -94,6 +95,22 @@ def test_export_gallery_uses_relative_path_after_collection_moves(tmp_path):
     assert (tmp_path / "out" / "images" / "id.jpg").read_bytes() == image.read_bytes()
 
 
+def test_export_gallery_normalizes_windows_relative_path_under_wsl(tmp_path):
+    collection = tmp_path / "Pictures"
+    relative_path = r"stuebeweg\dias\Paket 01\Box 09\02\img00732-roc.jpg"
+    image = collection / "stuebeweg" / "dias" / "Paket 01" / "Box 09" / "02" / "img00732-roc.jpg"
+    image.parent.mkdir(parents=True)
+    _image(image)
+    db = Catalog(collection / ".kiokufux" / "catalog.sqlite"); db.init_schema()
+    db.upsert_photo(Photo("id", Path(r"E:\Pictures\stuebeweg\dias\Paket 01\Box 09\02\img00732-roc.jpg"), relative_path, "hash"))
+
+    result = export_gallery(db, tmp_path / "out", collection_root=collection)
+
+    assert result.exported == 1
+    assert result.skipped == 0
+    assert (tmp_path / "out" / "images" / "id.jpg").read_bytes() == image.read_bytes()
+
+
 def test_export_gallery_falls_back_to_indexed_absolute_path(tmp_path):
     collection = tmp_path / "collection"
     collection.mkdir()
@@ -108,13 +125,14 @@ def test_export_gallery_falls_back_to_indexed_absolute_path(tmp_path):
     assert result.skipped == 0
 
 
-def test_export_gallery_rejects_relative_paths_outside_collection(tmp_path, caplog):
+@pytest.mark.parametrize("relative_path", ["../outside.jpg", r"..\outside.jpg"])
+def test_export_gallery_rejects_relative_paths_outside_collection(tmp_path, caplog, relative_path):
     collection = tmp_path / "collection"
     collection.mkdir()
     outside = tmp_path / "outside.jpg"
     _image(outside)
     db = Catalog(collection / ".kiokufux" / "catalog.sqlite"); db.init_schema()
-    db.upsert_photo(Photo("id", tmp_path / "missing.jpg", "../outside.jpg", "hash"))
+    db.upsert_photo(Photo("id", tmp_path / "missing.jpg", relative_path, "hash"))
 
     with caplog.at_level(logging.WARNING, logger="kiokufux.gallery"):
         result = export_gallery(db, tmp_path / "out", collection_root=collection)
@@ -122,7 +140,7 @@ def test_export_gallery_rejects_relative_paths_outside_collection(tmp_path, capl
     assert result.exported == 0
     assert result.skipped == 1
     assert "source not found" in caplog.text
-    assert "../outside.jpg" in caplog.text
+    assert relative_path in caplog.text
 
 
 def test_export_gallery_uses_exported_image_when_thumbnail_creation_fails(tmp_path, monkeypatch, caplog):

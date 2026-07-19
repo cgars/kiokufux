@@ -7,7 +7,7 @@ import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib import resources
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from string import Template
 
 from PIL import Image, ImageOps
@@ -64,13 +64,32 @@ def _write_thumbnail(photo: Photo, source: Path, dst: Path, catalog: Catalog) ->
         fixed.convert("RGB").save(dst, "JPEG", quality=82)
 
 
+def _relative_source_candidates(collection_root: Path, relative_path: str) -> list[Path]:
+    """Return safe native and Windows-separator interpretations of a stored relative path."""
+    native = Path(relative_path)
+    windows = PureWindowsPath(relative_path)
+    if native.is_absolute() or windows.anchor:
+        return []
+    variants = [Path(*windows.parts)] if "\\" in relative_path else [native]
+
+    root = collection_root.resolve()
+    candidates: list[Path] = []
+    for variant in variants:
+        try:
+            candidate = (root / variant).resolve()
+        except (OSError, RuntimeError):
+            continue
+        if candidate.is_relative_to(root) and candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
 def _source_path(photo: Photo, collection_root: Path) -> Path | None:
     """Locate a photo in the current collection before trying its indexed absolute path."""
     try:
-        root = collection_root.resolve()
-        relative_candidate = (root / photo.relative_path).resolve()
-        if relative_candidate.is_relative_to(root) and relative_candidate.is_file():
-            return relative_candidate
+        for relative_candidate in _relative_source_candidates(collection_root, photo.relative_path):
+            if relative_candidate.is_file():
+                return relative_candidate
     except (OSError, RuntimeError):
         pass
     try:
@@ -315,11 +334,14 @@ def export_gallery(
     for photo in photos:
         source = _source_path(photo, source_root)
         if source is None:
+            relative_candidates = ", ".join(
+                str(candidate) for candidate in _relative_source_candidates(source_root, photo.relative_path)
+            ) or "(invalid relative path)"
             logger.warning(
-                "Skipping gallery photo %s (%s): source not found at relative path %s or indexed path %s",
+                "Skipping gallery photo %s (%s): source not found at relative candidate(s) %s or indexed path %s",
                 photo.photo_id,
                 photo.relative_path,
-                source_root / photo.relative_path,
+                relative_candidates,
                 photo.source_path,
             )
             skipped += 1

@@ -20,7 +20,7 @@ from typing import Any, Protocol, Sequence
 import numpy as np
 from PIL import Image, ImageOps
 
-from .config import SUPPORTED_EXTENSIONS, WORKSPACE_NAME
+from .config import FacesConfig, SUPPORTED_EXTENSIONS, WORKSPACE_NAME
 from .hashing import photo_id_for_hash
 
 _GROUP_ADJECTIVES = ("amber", "brave", "bright", "calm", "clever", "dancing", "gentle", "golden",
@@ -173,7 +173,8 @@ def _fingerprint(path: Path) -> str:
 
 
 def scan_faces(root: Path, store: FaceStore, backend: FaceBackend, *, working_resolution: int = 1600,
-               confidence_threshold: float = .95, minimum_face_size: int = 40, thumbnail_size: int = 256) -> dict[str, int]:
+               confidence_threshold: float = .95, minimum_face_size: int = 40,
+               thumbnail_size: int = FacesConfig().thumbnail_size) -> dict[str, int]:
     stats = {"scanned": 0, "skipped": 0, "failed": 0, "detected": 0, "embedded": 0, "rejected": 0}
     cache = store.workspace / "cache" / "face-thumbnails"; cache.mkdir(parents=True, exist_ok=True)
     key = model_key(backend)

@@ -470,8 +470,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "faces":
         from .faces import FaceStore, FacenetBackend, cluster_faces, remove_all, reset_derived, scan_faces
+        if config.faces.backend != "facenet-pytorch":
+            parser.error(f"Unsupported faces.backend: {config.faces.backend!r}")
         if args.faces_cmd == "scan":
-            backend=FacenetBackend(args.device or config.faces.device)
+            backend = FacenetBackend(args.device or config.faces.device)
             print(f"Face backend: {backend.backend_id}/{backend.model_id}; device={backend.device}",file=sys.stderr)
             with FaceStore(ws) as store:
                 stats=scan_faces(root,store,backend,working_resolution=config.faces.working_resolution,

@@ -8,8 +8,10 @@ import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib import resources
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from string import Template
+from time import perf_counter
+from typing import Callable
 
 from PIL import Image, ImageOps
 
@@ -41,6 +43,8 @@ def _safe_name(photo: Photo, suffix: str | None = None) -> str:
 def _copy_image(src: Path, dst: Path, image_max_size: int | None = None) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     if image_max_size is None:
+        if _same_copied_file(src, dst):
+            return
         shutil.copy2(src, dst)
         return
     with Image.open(src) as img:
@@ -55,14 +59,32 @@ def _write_thumbnail(photo: Photo, source: Path, dst: Path, catalog: Catalog) ->
         thumb = catalog.artifact_path(photo.thumbnail_path)
         if thumb.exists():
             try:
+                if _same_copied_file(thumb, dst):
+                    return
                 shutil.copy2(thumb, dst)
                 return
             except OSError:
                 pass
+    # Photo IDs are content-derived, so an existing generated thumbnail for this
+    # ID remains valid when an owned gallery is refreshed incrementally.
+    if dst.is_file():
+        return
     with Image.open(source) as img:
         fixed = ImageOps.exif_transpose(img)
         fixed.thumbnail((360, 360), Image.Resampling.LANCZOS)
         fixed.convert("RGB").save(dst, "JPEG", quality=82)
+
+
+def _same_copied_file(src: Path, dst: Path) -> bool:
+    try:
+        source_stat = src.stat()
+        destination_stat = dst.stat()
+    except OSError:
+        return False
+    return (
+        source_stat.st_size == destination_stat.st_size
+        and abs(source_stat.st_mtime - destination_stat.st_mtime) <= 1.0
+    )
 
 
 def _relative_source_candidates(collection_root: Path, relative_path: str) -> list[Path]:
@@ -176,10 +198,17 @@ def _visible_people(faces: dict, face_mode: str) -> list[dict]:
     )
 
 
-def _people_by_photo(catalog: Catalog, face_index: FaceSidecarIndex, face_mode: str) -> dict[str, list[dict]]:
+def _face_blocks_by_photo(photos: list[Photo], face_index: FaceSidecarIndex) -> dict[str, dict]:
     return {
-        photo.photo_id: _visible_people(face_index.for_photo(photo.photo_id), face_mode)
-        for photo in catalog.list_photos()
+        photo.photo_id: face_index.for_photo(photo.photo_id)
+        for photo in photos
+    }
+
+
+def _people_by_photo(face_blocks: dict[str, dict], face_mode: str) -> dict[str, list[dict]]:
+    return {
+        photo_id: _visible_people(faces, face_mode)
+        for photo_id, faces in face_blocks.items()
     }
 
 
@@ -223,10 +252,10 @@ def _visible_face_boxes(faces: dict, face_mode: str) -> list[dict]:
     return boxes
 
 
-def _face_boxes_by_photo(catalog: Catalog, face_index: FaceSidecarIndex, face_mode: str) -> dict[str, list[dict]]:
+def _face_boxes_by_photo(face_blocks: dict[str, dict], face_mode: str) -> dict[str, list[dict]]:
     return {
-        photo.photo_id: _visible_face_boxes(face_index.for_photo(photo.photo_id), face_mode)
-        for photo in catalog.list_photos()
+        photo_id: _visible_face_boxes(faces, face_mode)
+        for photo_id, faces in face_blocks.items()
     }
 
 
@@ -279,26 +308,27 @@ def _photos_for_export(
     identity_ids: set[str] | None = None,
     people_by_photo: dict[str, list[dict]] | None = None,
     tags_by_photo: dict[str, list[str]] | None = None,
+    photos: list[Photo] | None = None,
 ) -> list[Photo]:
-    photos = catalog.list_photos()
+    selected = list(photos) if photos is not None else catalog.list_photos()
     if query_ids is not None:
-        photos = [photo for photo in photos if photo.photo_id in query_ids]
+        selected = [photo for photo in selected if photo.photo_id in query_ids]
     filters = [catalog.canonical_tag(tag) for tag in (tags or [])]
     if filters:
         tag_index = tags_by_photo if tags_by_photo is not None else _published_tags_by_photo(catalog)
         filtered = []
-        for photo in photos:
+        for photo in selected:
             pts = set(tag_index.get(photo.photo_id, []))
             if any(tag in pts for tag in filters):
                 filtered.append(photo)
-        photos = filtered
+        selected = filtered
     if identity_ids:
         index = people_by_photo or {}
-        photos = [
-            photo for photo in photos
+        selected = [
+            photo for photo in selected
             if any(person["identity_id"] in identity_ids for person in index.get(photo.photo_id, []))
         ]
-    return photos
+    return selected
 
 
 def _tag_frequencies(items: list[dict]) -> dict[str, int]:
@@ -359,55 +389,110 @@ def export_gallery(
     people: list[str] | None = None,
     face_groups: list[str] | None = None,
     unknown_faces: bool = False,
+    progress: Callable[[str], None] | None = None,
 ) -> GalleryExportResult:
     if face_mode not in FACE_MODES:
         raise ValueError(f"Unsupported gallery face mode: {face_mode!r}")
     if face_boxes and face_mode == "none":
         raise ValueError("Gallery face boxes require a published face mode")
 
+    def report(message: str) -> None:
+        logger.info(message)
+        if progress is not None:
+            progress(message)
+
     source_root = (collection_root or catalog.db_path.parent.parent).resolve()
 
     person_selectors = people or []
     group_selectors = face_groups or []
-    selection_index: dict[str, list[dict]] = {}
-    published_people_index: dict[str, list[dict]] = {}
-    published_face_boxes_index: dict[str, list[dict]] = {}
-    if face_mode != "none" or person_selectors or group_selectors or unknown_faces:
-        face_index = FaceSidecarIndex.load(workspace or catalog.db_path.parent)
-        selection_index = _people_by_photo(catalog, face_index, "detected")
-        if face_mode != "none":
-            published_people_index = _people_by_photo(catalog, face_index, face_mode)
-            if face_boxes:
-                published_face_boxes_index = _face_boxes_by_photo(catalog, face_index, face_mode)
-    identity_ids = _resolve_person_ids(selection_index, person_selectors)
-    identity_ids.update(_resolve_group_ids(selection_index, group_selectors))
-    if unknown_faces:
-        identity_ids.add("unknown")
+    selection_started = perf_counter()
+    report("Loading indexed photographs and tags...")
+    all_photos = catalog.list_photos()
+    published_tag_index = _published_tags_by_photo(catalog)
 
     query_ids = None
     if query:
         query_ids = {r.photo_id for r in run_search(catalog, query, top_k=top_k, backend=backend)}
-    published_tag_index = _published_tags_by_photo(catalog)
     photos = _photos_for_export(
         catalog,
         tags=tags,
         query_ids=query_ids,
-        identity_ids=identity_ids,
-        people_by_photo=selection_index,
         tags_by_photo=published_tag_index,
+        photos=all_photos,
+    )
+    report(
+        f"Tag/query selection matched {len(photos)} of {len(all_photos)} photographs "
+        f"in {perf_counter() - selection_started:.2f}s."
     )
 
+    published_people_index: dict[str, list[dict]] = {}
+    published_face_boxes_index: dict[str, list[dict]] = {}
+    if face_mode != "none" or person_selectors or group_selectors or unknown_faces:
+        face_started = perf_counter()
+        report(f"Loading face metadata for {len(photos)} candidate photographs...")
+        face_index = FaceSidecarIndex.load(workspace or catalog.db_path.parent)
+
+        # Name/group selectors must be resolved against the whole collection.
+        # Otherwise tag/query filtering limits face transformation to candidates.
+        if person_selectors or group_selectors:
+            face_blocks = _face_blocks_by_photo(all_photos, face_index)
+        else:
+            face_blocks = _face_blocks_by_photo(photos, face_index)
+        selection_index = _people_by_photo(face_blocks, "detected")
+
+        identity_ids = _resolve_person_ids(selection_index, person_selectors)
+        identity_ids.update(_resolve_group_ids(selection_index, group_selectors))
+        if unknown_faces:
+            identity_ids.add("unknown")
+        if identity_ids:
+            photos = _photos_for_export(
+                catalog,
+                identity_ids=identity_ids,
+                people_by_photo=selection_index,
+                photos=photos,
+            )
+
+        selected_photo_ids = {photo.photo_id for photo in photos}
+        selected_face_blocks = {
+            photo_id: faces for photo_id, faces in face_blocks.items()
+            if photo_id in selected_photo_ids
+        }
+        if face_mode != "none":
+            published_people_index = _people_by_photo(selected_face_blocks, face_mode)
+            if face_boxes:
+                published_face_boxes_index = _face_boxes_by_photo(selected_face_blocks, face_mode)
+        report(f"Face selection matched {len(photos)} photographs in {perf_counter() - face_started:.2f}s.")
+
+    previous_media_paths: set[str] = set()
     if output.exists():
         if not overwrite and not _is_legacy_gallery_export(output):
             raise FileExistsError(f"Output directory already exists: {output}")
-        shutil.rmtree(output)
-    output.mkdir(parents=True)
-    (output / "images").mkdir()
-    (output / "thumbnails").mkdir()
+        existing_media = _existing_gallery_media_paths(output)
+        if existing_media is None:
+            delete_started = perf_counter()
+            report(f"Existing output is not reusable; removing {output}...")
+            shutil.rmtree(output)
+            report(f"Removed existing output in {perf_counter() - delete_started:.2f}s.")
+        else:
+            previous_media_paths = existing_media
+            report(
+                f"Refreshing existing gallery incrementally; "
+                f"{len(previous_media_paths)} media files can be reused."
+            )
+    output.mkdir(parents=True, exist_ok=True)
+    for directory_name in ("images", "thumbnails"):
+        directory = output / directory_name
+        if directory.exists() and not directory.is_dir():
+            directory.unlink()
+        directory.mkdir(exist_ok=True)
 
+    export_started = perf_counter()
+    report(f"Exporting {len(photos)} photographs...")
     items: list[dict] = []
     skipped = 0
-    for photo in photos:
+    for position, photo in enumerate(photos, 1):
+        if position % 100 == 0:
+            report(f"Processing photograph {position}/{len(photos)}...")
         source = _source_path(photo, source_root)
         if source is None:
             relative_candidates = ", ".join(
@@ -471,6 +556,21 @@ def export_gallery(
         if face_boxes:
             item["face_boxes"] = published_face_boxes_index.get(photo.photo_id, [])
         items.append(item)
+    current_media_paths = {
+        str(item[path_key])
+        for item in items
+        for path_key in ("image_path", "thumbnail_path")
+    }
+    stale_media_paths = previous_media_paths - current_media_paths
+    cleanup_started = perf_counter()
+    for relative_path in stale_media_paths:
+        candidate = output.joinpath(*PurePosixPath(relative_path).parts)
+        candidate.unlink(missing_ok=True)
+    if stale_media_paths:
+        report(
+            f"Removed {len(stale_media_paths)} stale media files in "
+            f"{perf_counter() - cleanup_started:.2f}s."
+        )
     source_summary = {
         "query": query,
         "tags": tags or [],
@@ -494,6 +594,10 @@ def export_gallery(
     doc = build_gallery_document(title, items, source_summary)
     (output / "gallery.json").write_text(json.dumps(doc, indent=2, sort_keys=True), encoding="utf-8")
     _write_gallery_template_files(output, title, min_tag_count, max_cloud_tags, doc)
+    report(
+        f"Gallery files written in {perf_counter() - export_started:.2f}s: "
+        f"{len(items)} exported, {skipped} skipped."
+    )
     return GalleryExportResult(len(photos), len(items), skipped, output)
 
 
@@ -513,6 +617,36 @@ def _is_legacy_gallery_export(output: Path) -> bool:
     except OSError:
         return False
     return 'fetch("gallery.json")' in html_text or '<script src="gallery.js"></script>' in html_text
+
+
+def _existing_gallery_media_paths(output: Path) -> set[str] | None:
+    """Read safe generated media paths so a gallery can be refreshed in place."""
+    try:
+        document = json.loads((output / "gallery.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    items = document.get("items") if isinstance(document, dict) else None
+    if not isinstance(items, list):
+        return None
+
+    paths: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            return None
+        for key in ("image_path", "thumbnail_path"):
+            value = item.get(key)
+            if not isinstance(value, str):
+                return None
+            relative = PurePosixPath(value)
+            if (
+                relative.is_absolute()
+                or len(relative.parts) < 2
+                or relative.parts[0] not in {"images", "thumbnails"}
+                or ".." in relative.parts
+            ):
+                return None
+            paths.add(relative.as_posix())
+    return paths
 
 
 def _write_gallery_template_files(

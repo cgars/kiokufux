@@ -569,6 +569,7 @@ def main(argv: list[str] | None = None) -> int:
                 people=args.person,
                 face_groups=args.face_group,
                 unknown_faces=args.unknown_faces,
+                progress=(None if args.verbose else lambda message: print(message, file=sys.stderr)),
             )
             logger.info("Exported gallery to %s: %s exported, %s skipped", result.output, result.exported, result.skipped)
             print(f"Exported gallery to {result.output}: selected={result.selected}, exported={result.exported}, skipped={result.skipped}")

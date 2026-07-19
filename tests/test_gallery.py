@@ -108,6 +108,87 @@ def test_export_gallery_bulk_loads_and_reuses_canonical_tags(tmp_path):
     assert all(item["tags"] == ["beach"] for item in doc["items"])
 
 
+def test_export_gallery_transforms_faces_only_for_tag_candidates(tmp_path, monkeypatch):
+    db = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite"); db.init_schema()
+    image = tmp_path / "source.jpg"
+    _image(image)
+    expected = {"id-3", "id-17"}
+    for index in range(20):
+        photo_id = f"id-{index}"
+        db.upsert_photo(Photo(photo_id, image, f"photos/{index}.jpg", f"hash-{index}"))
+        db.add_tag(photo_id, "beach" if photo_id in expected else "indoors")
+
+    class RecordingFaceIndex:
+        def __init__(self):
+            self.calls = []
+
+        def for_photo(self, photo_id):
+            self.calls.append(photo_id)
+            return {"scan_status": "not_scanned", "model_key": None, "occurrences": []}
+
+    face_index = RecordingFaceIndex()
+    monkeypatch.setattr(gallery_module.FaceSidecarIndex, "load", lambda workspace: face_index)
+
+    result = export_gallery(
+        db,
+        tmp_path / "out",
+        workspace=tmp_path / ".kiokufux",
+        tags=["beach"],
+        face_mode="detected",
+    )
+
+    assert result.selected == 2
+    assert set(face_index.calls) == expected
+    assert len(face_index.calls) == len(expected)
+
+
+def test_export_gallery_reports_timed_phases_and_incremental_refresh(tmp_path):
+    db = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite"); db.init_schema()
+    image = tmp_path / "source.jpg"
+    _image(image)
+    db.upsert_photo(Photo("id", image, "source.jpg", "hash"))
+    output = tmp_path / "out"
+    export_gallery(db, output)
+
+    messages = []
+    export_gallery(db, output, overwrite=True, progress=messages.append)
+
+    assert any(message.startswith("Tag/query selection matched 1 of 1 photographs in ") for message in messages)
+    assert any(message.startswith("Refreshing existing gallery incrementally; 2 media files can be reused") for message in messages)
+    assert any(message.startswith("Gallery files written in ") for message in messages)
+
+
+def test_incremental_gallery_refresh_reuses_unchanged_media_and_removes_stale_files(tmp_path, monkeypatch):
+    db = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite"); db.init_schema()
+    first = tmp_path / "first.jpg"
+    second = tmp_path / "second.jpg"
+    _image(first)
+    _image(second)
+    db.upsert_photo(Photo("id-1", first, "first.jpg", "hash-1"))
+    db.upsert_photo(Photo("id-2", second, "second.jpg", "hash-2"))
+    db.add_tag("id-1", "keep")
+    db.add_tag("id-2", "drop")
+    output = tmp_path / "out"
+    export_gallery(db, output)
+
+    original_copy = gallery_module.shutil.copy2
+    copied = []
+
+    def record_copy(source, destination):
+        copied.append((Path(source), Path(destination)))
+        return original_copy(source, destination)
+
+    monkeypatch.setattr(gallery_module.shutil, "copy2", record_copy)
+    result = export_gallery(db, output, tags=["keep"], overwrite=True)
+
+    assert result.exported == 1
+    assert copied == []
+    assert (output / "images" / "id-1.jpg").is_file()
+    assert (output / "thumbnails" / "id-1.jpg").is_file()
+    assert not (output / "images" / "id-2.jpg").exists()
+    assert not (output / "thumbnails" / "id-2.jpg").exists()
+
+
 def test_export_gallery_uses_relative_path_after_collection_moves(tmp_path):
     collection = tmp_path / "moved-collection"
     image = collection / "nested" / "photo.jpg"

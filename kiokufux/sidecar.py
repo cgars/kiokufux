@@ -89,11 +89,13 @@ class FaceSidecarIndex:
     def for_photo(self, photo_id: str) -> dict[str, Any]:
         value = self.by_photo.get(photo_id)
         if value is None:
-            # Older face indexes used the full SHA-256 as image_id while the catalog
-            # stores photo_id_for_hash(file_hash). Bridge that historical mismatch so
-            # read-only export includes already-scanned face data.
-            matches = [faces for image_id, faces in self.by_photo.items() if photo_id_for_hash(image_id) == photo_id]
-            value = matches[0] if len(matches) == 1 else None
+            # Older face indexes used the full SHA-256 as image_id while the catalog stores
+            # photo_id_for_hash(file_hash). Cache a bridge map so export-sidecars stays O(n).
+            bridge = getattr(self, "_legacy_bridge", None)
+            if bridge is None:
+                bridge = {photo_id_for_hash(image_id): faces for image_id, faces in self.by_photo.items()}
+                setattr(self, "_legacy_bridge", bridge)
+            value = bridge.get(photo_id)
         return json.loads(json.dumps(value if value is not None else _empty_faces(), sort_keys=True))
 
 

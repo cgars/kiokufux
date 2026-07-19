@@ -282,8 +282,13 @@ class ReviewState:
         self._migrate()
         self.save()
     @staticmethod
-    def _load(path:Path, default:dict[str,Any])->dict[str,Any]:
-        return json.loads(path.read_text()) if path.exists() else default
+    def _load(path: Path, default: dict[str, Any]) -> dict[str, Any]:
+        if not path.exists():
+            return default
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return default
     def _migrate(self) -> None:
         self.review.setdefault("collection_id", str(uuid.uuid4()))
         self.review.setdefault("actions", [])

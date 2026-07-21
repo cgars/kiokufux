@@ -1,5 +1,6 @@
 import json
 import threading
+import subprocess
 import urllib.request
 from pathlib import Path
 
@@ -338,3 +339,81 @@ def test_confirmed_people_detail_opens_photos_and_merges_people(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def _served(workspace_root, workspace):
+    server = make_server(workspace_root, workspace)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    return server, thread, f"http://127.0.0.1:{server.server_address[1]}"
+
+
+def test_face_context_endpoint_levels_cache_invalid_and_edge_crop(tmp_path):
+    Image.new("RGB", (320, 180), "white").save(tmp_path / "edge.jpg")
+    workspace = tmp_path / ".kiokufux"
+    with FaceStore(workspace) as store:
+        scan_faces(tmp_path, store, FakeBackend(), minimum_face_size=1)
+        face_id = store.db.execute("SELECT face_id FROM face_occurrences").fetchone()[0]
+    server, thread, base = _served(tmp_path, workspace)
+    try:
+        sizes = {}
+        for level in ("face", "person", "scene"):
+            with urllib.request.urlopen(base + f"/api/faces/{face_id}/context?level={level}") as response:
+                data = response.read()
+            assert data.startswith(b"\xff\xd8")
+            sizes[level] = Image.open(__import__('io').BytesIO(data)).size
+        assert sizes["face"][0] <= 360 and sizes["person"][0] <= 900 and max(sizes["scene"]) <= 1400
+        assert list((workspace / "cache" / "face-context").glob(f"*-{face_id}-face.jpg"))
+        try:
+            urllib.request.urlopen(base + "/api/faces/not-a-face/context?level=face")
+        except urllib.error.HTTPError as error:
+            assert error.code == 404
+        else:
+            raise AssertionError("unknown face_id accepted")
+        try:
+            urllib.request.urlopen(base + f"/api/faces/{face_id}/context?level=../../scene")
+        except urllib.error.HTTPError as error:
+            assert error.code == 400
+        else:
+            raise AssertionError("invalid context level accepted")
+    finally:
+        server.shutdown(); server.server_close(); thread.join()
+
+
+def test_face_context_endpoint_honors_exif_orientation(tmp_path):
+    image = Image.new("RGB", (40, 120), "red")
+    exif = image.getexif(); exif[274] = 6
+    image.save(tmp_path / "oriented.jpg", exif=exif)
+    workspace = tmp_path / ".kiokufux"
+    with FaceStore(workspace) as store:
+        scan_faces(tmp_path, store, FakeBackend(), minimum_face_size=1)
+        face_id = store.db.execute("SELECT face_id FROM face_occurrences").fetchone()[0]
+    server, thread, base = _served(tmp_path, workspace)
+    try:
+        with urllib.request.urlopen(base + f"/api/faces/{face_id}/context?level=scene") as response:
+            size = Image.open(__import__('io').BytesIO(response.read())).size
+        assert size[0] > size[1]
+    finally:
+        server.shutdown(); server.server_close(); thread.join()
+
+
+def test_comparison_workbench_html_wiring_accessibility_and_temporary_decisions():
+    assert "review-modes" in HTML
+    assert "Matrix" in HTML and "Kontext" in HTML and "1:1" in HTML
+    assert "Angeheftete Referenz" in HTML and "Als Referenz" in HTML
+    assert "Gesicht" in HTML and "Person" in HTML and "Szene" in HTML
+    assert "aria-pressed" in HTML and "aria-label=\"Comparison modes\"" in HTML
+    assert "loading=\"lazy\"" in HTML
+    assert "Nicht zugehörig" in HTML and "tempDecisions" in HTML
+    assert "mutate('/api/review/" in HTML
+    assert "markTemp" in HTML and "toggleFace(card)" in HTML
+    subprocess.run(["node", "--check"], input=HTML.split("<script>", 1)[1].split("</script>", 1)[0], text=True, check=True)
+
+
+def test_groups_of_two_three_and_many_have_pinned_matrix_context_and_pair_controls(tmp_path):
+    for count in (2, 3, 10):
+        faces = [{"face_id": f"f{i}", "image_id": f"i{i}", "confidence": .99, "quality": i / 10, "image_path": f"p{i}.jpg"} for i in range(count)]
+        assert "pinnedFaceId=currentGroup.representative_face_id||bestFace(currentGroup.faces).face_id" in HTML
+        assert "compareMode==='pair'" in HTML
+        assert "others.slice(0,visibleLimit)" in HTML
+        assert len(faces) == count

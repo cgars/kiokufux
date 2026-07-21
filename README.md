@@ -344,3 +344,17 @@ kiokufux export-gallery ./photos ./anonymous-group --face-group quiet_fox
 ```
 
 Pending or rejected tag proposals are not included. Use `--min-tag-count` and `--max-cloud-tags` to tune the default cloud, and `--image-max-size` to export downscaled image derivatives instead of original-size copies.
+
+### Face Review comparison workbench
+
+The local face reviewer includes a scalable comparison workbench for provisional groups. The group header keeps the anonymous friendly group name, occurrence and photograph counts, review state, conflict badges, and the existing durable actions: Confirm person, Mark group reviewed, Split selected, Reject detection, and Exclude poor crop.
+
+Three modes help compare groups of two, three, ten, or more occurrences without squeezing more than two full photographs side by side:
+
+- **Matrix** is the default overview for larger groups. It pins one reference face and lays the remaining occurrences out in a responsive, keyboard-accessible card matrix with lazy-loaded context crops and a progressive “Weitere anzeigen” control for very large groups.
+- **Kontext** uses the same pinned reference but shows larger source-photo crops so reviewers can compare the person in their photographic surroundings.
+- **1:1** compares the pinned reference with exactly one selected occurrence.
+
+The context crop endpoint accepts only known `face_id` values and the fixed crop levels `face`, `person`, and `scene` at `/api/faces/{face_id}/context?level=face|person|scene`. Crops are centered on the stored, EXIF-oriented bounding box, clipped safely at image edges, rendered as JPEG derivatives with bounded dimensions, and cached under `.kiokufux/cache/face-context/` using the source content fingerprint, `face_id`, and crop level. The original photograph is never modified, and no file path is accepted from the browser.
+
+Temporary comparison decisions are session-only helpers: **Passt**, **Unsicher**, and **Nicht zugehörig** are stored only in browser state. Marking **Nicht zugehörig** selects that occurrence to prepare a later Split selected action, but it does not persist review data by itself. Durable changes continue to be written only by the explicit existing review actions: Split selected, Reject detection, Exclude poor crop, Mark group reviewed, Confirm person, merge actions, and Create group from selected.

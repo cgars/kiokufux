@@ -61,7 +61,7 @@ kiokufux init PATH
 kiokufux scan PATH
 kiokufux thumbnails PATH
 kiokufux export-sidecars PATH
-kiokufux export-gallery PATH OUTPUT [--title TITLE] [--query QUERY] [--tag TAG] [--top-k TOP_K] [--min-tag-count MIN_TAG_COUNT] [--max-cloud-tags MAX_CLOUD_TAGS] [--image-max-size IMAGE_MAX_SIZE] [--overwrite] [--embedding-backend auto|openclip|simple] [--openclip-model MODEL] [--openclip-pretrained WEIGHTS]
+kiokufux export-gallery PATH OUTPUT [--title TITLE] [--query QUERY] [--tag TAG] [--faces none|confirmed|grouped|detected] [--face-boxes] [--person PERSON] [--face-group GROUP] [--unknown-faces] [--top-k TOP_K] [--min-tag-count MIN_TAG_COUNT] [--max-cloud-tags MAX_CLOUD_TAGS] [--image-max-size IMAGE_MAX_SIZE] [--overwrite] [--embedding-backend auto|openclip|simple] [--openclip-model MODEL] [--openclip-pretrained WEIGHTS]
 
 kiokufux rotate PATH [PHOTO_ID_OR_7_CHAR_PREFIX] (--degrees 90|180|270 | --auto) [--no-backup] [--vlm-fallback] [--vlm-only] [--vlm-verify] [--vlm-compare] [--vlm-backend fake|ollama] [--ollama-url URL] [--ollama-model MODEL] [--vlm-timeout SECONDS]
 kiokufux prompts [--topic all|rotation|vlm-analysis]
@@ -103,6 +103,7 @@ Notes:
 - `vlm-descriptions` is an alias for `descriptions`.
 - `accept-tag --all` accepts all pending proposals, optionally limited by `PHOTO_ID_OR_7_CHAR_PREFIX`; single-proposal acceptance uses `PHOTO_ID_OR_7_CHAR_PREFIX TAG`.
 - `faces review` defaults to a loopback host; non-loopback hosts are rejected by the review server.
+- The face reviewer uses the gallery's pine-and-paper visual system, responsive photographic cards, and context-sensitive actions for ungrouped detections, provisional groups, and confirmed people.
 
 ## Example workflow
 
@@ -311,7 +312,21 @@ Compact example:
 
 ## Static HTML gallery export
 
-`kiokufux export-gallery PATH OUTPUT` creates a standalone, offline-friendly gallery in `OUTPUT` with `index.html`, `gallery.json`, static CSS/JavaScript assets, copied images, and thumbnails. Open `index.html` directly in a browser; its data, CSS, and JavaScript are embedded, so no local web server is required. The gallery searches filenames, relative paths, VLM captions/descriptions, manual tags, and accepted automatic tags in the browser, and includes a frequency-weighted tag cloud for published tags. Exports from the earlier `fetch("gallery.json")` implementation are detected and replaced automatically; use `--overwrite` to regenerate any other existing export.
+`kiokufux export-gallery PATH OUTPUT` creates a standalone, offline-friendly gallery in `OUTPUT` with `index.html`, `gallery.json`, static CSS/JavaScript assets, copied images, and thumbnails. Open `index.html` directly in a browser; its data, CSS, and JavaScript are embedded, so no local web server is required. The gallery searches filenames, relative paths, VLM captions/descriptions, manual tags, and accepted automatic tags in the browser, and includes a frequency-weighted tag cloud for published tags. Its lightbox centers each photograph, supports zooming and panning in an independently scrollable media pane, keeps details independently scrollable, and collapses long descriptions behind a reader-controlled expansion. Exports from the earlier `fetch("gallery.json")` implementation are detected and replaced automatically; use `--overwrite` to regenerate any other existing export.
+
+During export, source photographs are located from the current collection `PATH` and their indexed relative paths first. Windows and POSIX directory separators are normalized for the current operating system. The stored absolute path is only a compatibility fallback, so moving the whole collection between drives, mount points, or machines does not require a rescan when its internal directory structure remains unchanged. Relative paths are constrained to the collection root.
+
+The exporter reports and times selection, optional face processing, output preparation, and image export separately. This makes slow mounted-drive operations visible instead of leaving the terminal apparently idle. With `--overwrite`, a valid previous gallery is refreshed incrementally: unchanged copied images and generated thumbnails are reused, changed files are overwritten, and media no longer selected is removed. If a source cannot be found or copied, the exporter records the photo and exact error in `.kiokufux/logs/kiokufux.log`; add `-v` to show the warning in the terminal. A thumbnail-generation failure no longer drops an otherwise exported photograph: the gallery uses its exported image as the preview instead.
+
+Face information is excluded by default. The optional `--faces` modes progressively add privacy-safe People filters:
+
+- `confirmed` publishes user-confirmed people using stable person IDs, display names, and friendly names.
+- `grouped` also publishes non-conflicting provisional recurring groups under their anonymous friendly names and marks them as unconfirmed.
+- `detected` also adds a single **Unknown people** category for photos containing usable ungrouped detections, including only the number found in each photo.
+
+All enabled identities become searchable and appear in the photograph detail view. Add the separate, explicit `--face-boxes` option to publish normalized bounding rectangles for identities allowed by the selected face mode; the lightbox then offers a **Show faces** toggle. Without that option, bounding boxes remain private. Embeddings, face IDs, detector confidence, model metadata, rejected faces, excluded faces, and conflicting assignments are never published.
+
+Use repeatable `--person` and `--face-group` selectors to export photos containing an exact confirmed person or provisional group; `--unknown-faces` selects photos with usable ungrouped detections. Identity selectors are combined with OR, while identity selection combines with query and tag filters using AND. These selectors can be used with `--faces none` to create a face-based gallery without publishing any identity metadata or selector values in the resulting files.
 
 Examples:
 
@@ -319,6 +334,13 @@ Examples:
 kiokufux export-gallery ./photos ./gallery-export --title "Family Archive"
 kiokufux export-gallery ./photos ./gallery-export --query "beach" --top-k 25 --overwrite
 kiokufux export-gallery ./photos ./gallery-export --tag beach --tag family
+kiokufux export-gallery ./photos ./gallery-export --faces confirmed
+kiokufux export-gallery ./photos ./gallery-export --faces grouped
+kiokufux export-gallery ./photos ./review-export --faces detected --unknown-faces
+kiokufux export-gallery ./photos ./review-export --faces detected --face-boxes
+kiokufux export-gallery ./photos ./anna-export --person Anna --faces confirmed
+kiokufux export-gallery ./photos ./family-export --person Anna --person Bert
+kiokufux export-gallery ./photos ./anonymous-group --face-group quiet_fox
 ```
 
 Pending or rejected tag proposals are not included. Use `--min-tag-count` and `--max-cloud-tags` to tune the default cloud, and `--image-max-size` to export downscaled image derivatives instead of original-size copies.

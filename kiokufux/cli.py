@@ -44,7 +44,10 @@ def _catalog(root: Path) -> tuple[Path, Catalog]:
 def _setup_logging(ws: Path, verbose: int = 0) -> logging.Logger:
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(logging.DEBUG)
-    logger.propagate = False
+    # Keep propagation enabled so callers and test harnesses that attach root
+    # logging handlers (for example pytest's caplog) can still observe records
+    # from child loggers after CLI commands configure file/console handlers.
+    logger.propagate = True
     logger.handlers.clear()
 
     file_handler = logging.FileHandler(ws / "logs" / "kiokufux.log")
@@ -188,6 +191,16 @@ def _build_parser() -> argparse.ArgumentParser:
     gallery.add_argument("--title", default="KiokuFux Gallery")
     gallery.add_argument("--query")
     gallery.add_argument("--tag", action="append", default=[])
+    gallery.add_argument(
+        "--faces",
+        choices=["none", "confirmed", "grouped", "detected"],
+        default="none",
+        help="Publish confirmed people, anonymous recurring groups, or all usable detections; disabled by default for privacy",
+    )
+    gallery.add_argument("--person", action="append", default=[], help="Export only photos containing this confirmed display name, friendly name, or person ID; repeatable")
+    gallery.add_argument("--face-group", action="append", default=[], help="Export only photos containing this provisional friendly group name or group ID; repeatable")
+    gallery.add_argument("--unknown-faces", action="store_true", help="Export only photos containing usable ungrouped face detections")
+    gallery.add_argument("--face-boxes", action="store_true", help="Publish normalized face bounding boxes and enable the gallery overlay; requires --faces")
     gallery.add_argument("--top-k", type=int)
     gallery.add_argument("--min-tag-count", type=int, default=2)
     gallery.add_argument("--max-cloud-tags", type=int, default=40)
@@ -432,6 +445,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(cleaned_argv)
     args.verbose = max(args.verbose, extracted_verbose)
+    if args.cmd == "export-gallery" and args.face_boxes and args.faces == "none":
+        parser.error("--face-boxes requires --faces confirmed, grouped, or detected")
     if args.cmd == "prompts":
         _print_prompts(args.topic)
         return 0
@@ -550,6 +565,14 @@ def main(argv: list[str] | None = None) -> int:
                 image_max_size=args.image_max_size,
                 overwrite=args.overwrite,
                 backend=_embedding_backend(args, config) if args.query else None,
+                workspace=ws,
+                collection_root=root,
+                face_mode=args.faces,
+                face_boxes=args.face_boxes,
+                people=args.person,
+                face_groups=args.face_group,
+                unknown_faces=args.unknown_faces,
+                progress=(None if args.verbose else lambda message: print(message, file=sys.stderr)),
             )
             logger.info("Exported gallery to %s: %s exported, %s skipped", result.output, result.exported, result.skipped)
             print(f"Exported gallery to {result.output}: selected={result.selected}, exported={result.exported}, skipped={result.skipped}")

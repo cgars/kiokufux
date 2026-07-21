@@ -403,7 +403,9 @@ def test_comparison_workbench_html_wiring_accessibility_and_temporary_decisions(
     assert "Angeheftete Referenz" in HTML and "Als Referenz" in HTML
     assert "Gesicht" in HTML and "Person" in HTML and "Szene" in HTML
     assert "aria-pressed" in HTML and "aria-label=\"Comparison modes\"" in HTML
-    assert "loading=\"lazy\"" in HTML
+    assert "class=\"context-thumb\" data-src" in HTML
+    assert "IntersectionObserver" in HTML and "hydrateContextImages" in HTML
+    assert "loading=\"lazy\"" not in HTML
     assert "Nicht zugehörig" in HTML and "tempDecisions" in HTML
     assert "mutate('/api/review/" in HTML
     assert "markTemp" in HTML and "toggleFace(card)" in HTML
@@ -416,4 +418,5 @@ def test_groups_of_two_three_and_many_have_pinned_matrix_context_and_pair_contro
         assert "pinnedFaceId=currentGroup.representative_face_id||bestFace(currentGroup.faces).face_id" in HTML
         assert "compareMode==='pair'" in HTML
         assert "others.slice(0,visibleLimit)" in HTML
+        assert "rootMargin:'360px 0px'" in HTML
         assert len(faces) == count

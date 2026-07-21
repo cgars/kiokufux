@@ -7,7 +7,7 @@ import uuid
 import webbrowser
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from urllib.parse import urlparse
 
 from PIL import Image, ImageOps
@@ -656,7 +656,7 @@ dialog::backdrop {
 
 .zoom-viewport {
   width: 100%;
-  max-height: 70vh;
+  height: min(70vh, 720px);
   overflow: auto;
   overscroll-behavior: contain;
   border: 1px solid rgba(23, 36, 31, 0.45);
@@ -666,7 +666,9 @@ dialog::backdrop {
 }
 
 .photo-wrap { position: relative; width: 100%; margin: auto; line-height: 0; }
-.photo-wrap > img { display: block; width: 100%; height: auto; border-radius: 1rem; }
+.photo-wrap > img { display: block; width: 100%; height: 100%; border-radius: 1rem; object-fit: contain; }
+.compare-items.side-by-side { grid-auto-flow: column; grid-auto-columns: minmax(420px, min(72vw, 760px)); align-items: stretch; }
+.compare-items.side-by-side .compare-item { min-height: calc(94vh - 7rem); grid-template-columns: 145px minmax(0, 1fr); }
 .face-box { position: absolute; box-sizing: border-box; border: 3px solid #e5ad50; border-radius: 0.38rem; pointer-events: none; }
 .face-box.active { border-color: #d9683d; box-shadow: 0 0 0 2px rgba(250, 248, 241, 0.9); }
 .face-box span { position: absolute; top: -1.8rem; left: 0; padding: 0.15rem 0.4rem; border-radius: 999px; background: var(--pine-950); color: white; font-size: 0.72rem; line-height: normal; white-space: nowrap; }
@@ -749,12 +751,14 @@ function confirmPerson(){if(!currentGroup)return notify('Open a reviewed group f
 async function submitPerson(event){event.preventDefault();let name=personName.value.trim();try{await withFeedback('Person confirmation',()=>mutate('/api/people',{group_id:currentGroup.group_id,display_name:name||null}));confirmDialog.close();await showGroups()}catch(e){}}
 async function createGroupFromSelected(){let ids=selected();if(ids.length<2)return notify('Select at least two ungrouped faces to create a group.','error');try{let result=await withFeedback('New group',()=>mutate('/api/review/create-group',{face_ids:ids}));await showGroups();if(result.group_id)await openGroup(result.group_id)}catch(e){}}
 async function mergeConfirmedPerson(){if(!currentPerson)return notify('Open a confirmed person before merging.','error');if(!personMergeTarget.value)return notify('Choose another confirmed person.','error');try{let result=await withFeedback('Confirmed people merge',()=>mutate('/api/people/merge',{source_person_id:currentPerson.person_id,target_person_id:personMergeTarget.value}));await showConfirmed();await openPerson(result.person_id)}catch(e){}}
-function applyZoom(item,scale){scale=Math.max(.5,Math.min(5,scale));let wrap=item.querySelector('.photo-wrap');wrap.dataset.scale=scale;wrap.style.width=(scale*100)+'%';item.querySelector('.zoom-value').value=Math.round(scale*100)+'%'}
+function applyZoom(item,scale){scale=Math.max(.5,Math.min(5,scale));let wrap=item.querySelector('.photo-wrap'),fitW=Number(wrap.dataset.fitWidth)||wrap.clientWidth||1,fitH=Number(wrap.dataset.fitHeight)||wrap.clientHeight||1;wrap.dataset.scale=scale;wrap.style.width=Math.max(1,Math.round(fitW*scale))+'px';wrap.style.height=Math.max(1,Math.round(fitH*scale))+'px';item.querySelector('.zoom-value').value=Math.round(scale*100)+'%'}
+function fitPhoto(item){let viewport=item.querySelector('.zoom-viewport'),wrap=item.querySelector('.photo-wrap'),img=wrap.querySelector('img');if(!img.naturalWidth||!img.naturalHeight||!viewport.clientWidth||!viewport.clientHeight)return;let scale=Math.min(viewport.clientWidth/img.naturalWidth,viewport.clientHeight/img.naturalHeight);wrap.dataset.fitWidth=Math.max(1,Math.round(img.naturalWidth*scale));wrap.dataset.fitHeight=Math.max(1,Math.round(img.naturalHeight*scale));applyZoom(item,1);viewport.scrollTo(0,0)}
+function fitAllPhotos(){document.querySelectorAll('.compare-item').forEach(fitPhoto)}
 function zoomBy(button,factor){let item=button.closest('.compare-item'),wrap=item.querySelector('.photo-wrap');applyZoom(item,(Number(wrap.dataset.scale)||1)*factor)}
-function resetZoom(button){let item=button.closest('.compare-item');applyZoom(item,1);item.querySelector('.zoom-viewport').scrollTo(0,0)}
+function resetZoom(button){fitPhoto(button.closest('.compare-item'))}
 function wheelZoom(event){if(!event.ctrlKey&&!event.metaKey)return;event.preventDefault();let item=event.currentTarget.closest('.compare-item'),wrap=item.querySelector('.photo-wrap');applyZoom(item,(Number(wrap.dataset.scale)||1)*(event.deltaY<0?1.2:1/1.2))}
-async function comparisonItem(face,index){let item=document.createElement('article');item.className='compare-item';item.innerHTML=`<aside class="reference-panel"><div class="eyebrow">Selected face</div><h3>Occurrence ${index+1}</h3><img src="/api/faces/${face.face_id}/thumbnail"><p class="hint">Rust outline marks this face. Amber outlines mark other detections.</p></aside><section class="photo-panel"><div class="canvas-toolbar"><b>Source photograph</b><div class="zoom-controls"><button onclick="resetZoom(this)">Fit</button><button onclick="resetZoom(this)">100%</button><button onclick="zoomBy(this,1/1.25)" aria-label="Zoom out">−</button><output class="zoom-value">100%</output><button onclick="zoomBy(this,1.25)" aria-label="Zoom in">+</button></div></div><div class="zoom-viewport" onwheel="wheelZoom(event)"><div class="photo-wrap" data-scale="1"><img src="/api/images/${face.image_id}/thumbnail"></div></div></section>`;compareItems.appendChild(item);let wrap=item.querySelector('.photo-wrap');let detections=await api('/api/images/'+face.image_id+'/faces');detections.forEach((f,i)=>{let box=document.createElement('div');box.className='face-box'+(f.face_id===face.face_id?' active':'');box.style.left=(f.x1*100)+'%';box.style.top=(f.y1*100)+'%';box.style.width=((f.x2-f.x1)*100)+'%';box.style.height=((f.y2-f.y1)*100)+'%';box.innerHTML='<span>'+(f.face_id===face.face_id?'selected face':'face '+(i+1))+'</span>';wrap.appendChild(box)})}
-async function showComparison(items){compareItems.innerHTML='';compareTitle.textContent=items.length===1?'Photograph context':`${items.length} selected occurrences side by side`;try{await Promise.all(items.map(comparisonItem));context.showModal()}catch(err){notify(err.message,'error')}}
+async function comparisonItem(face,index){let item=document.createElement('article');item.className='compare-item';item.innerHTML=`<aside class="reference-panel"><div class="eyebrow">Selected face</div><h3>Occurrence ${index+1}</h3><img src="/api/faces/${face.face_id}/thumbnail"><p class="hint">Rust outline marks this face. Amber outlines mark other detections.</p></aside><section class="photo-panel"><div class="canvas-toolbar"><b>Source photograph</b><div class="zoom-controls"><button onclick="resetZoom(this)">Fit</button><button onclick="zoomBy(this,1/1.25)" aria-label="Zoom out">−</button><output class="zoom-value">100%</output><button onclick="zoomBy(this,1.25)" aria-label="Zoom in">+</button></div></div><div class="zoom-viewport" onwheel="wheelZoom(event)"><div class="photo-wrap" data-scale="1"><img src="/api/images/${face.image_id}/thumbnail"></div></div></section>`;compareItems.appendChild(item);let wrap=item.querySelector('.photo-wrap'),img=wrap.querySelector('img');img.addEventListener('load',()=>fitPhoto(item),{once:true});let detections=await api('/api/images/'+face.image_id+'/faces');detections.forEach((f,i)=>{let box=document.createElement('div');box.className='face-box'+(f.face_id===face.face_id?' active':'');box.style.left=(f.x1*100)+'%';box.style.top=(f.y1*100)+'%';box.style.width=((f.x2-f.x1)*100)+'%';box.style.height=((f.y2-f.y1)*100)+'%';box.innerHTML='<span>'+(f.face_id===face.face_id?'selected face':'face '+(i+1))+'</span>';wrap.appendChild(box)})}
+async function showComparison(items){compareItems.innerHTML='';compareItems.classList.toggle('side-by-side',items.length>1);compareTitle.textContent=items.length===1?'Photograph context':`${items.length} selected occurrences side by side`;try{await Promise.all(items.map(comparisonItem));context.showModal();requestAnimationFrame(fitAllPhotos)}catch(err){notify(err.message,'error')}}
 function compareSelected(){let ids=selected();if(ids.length<2)return notify('Select at least two faces to compare.','error');showComparison(currentGroup.faces.filter(f=>ids.includes(f.face_id)))}
 function viewContext(e,imageId,faceId){e.stopPropagation();let face=(currentGroup?.faces||[]).find(f=>f.face_id===faceId)||{image_id:imageId,face_id:faceId};showComparison([face])}
 document.addEventListener('keydown',event=>{if(event.target.matches('input,select,textarea'))return;if(event.key.toLowerCase()==='c')compareSelected();if(event.key.toLowerCase()==='s')act('split');if(event.key.toLowerCase()==='r')reviewGroup();if(event.key==='Escape'&&context.open)context.close()});
@@ -765,7 +769,12 @@ start().catch(e=>notify(e.message,'error'));
 
 
 def safe_collection_path(root: Path, candidate: str) -> Path:
-    resolved = (root / candidate).resolve()
+    windows_candidate = PureWindowsPath(candidate)
+    native_candidate = Path(candidate)
+    if windows_candidate.anchor:
+        raise ValueError("path leaves collection")
+    relative_candidate = Path(*windows_candidate.parts) if "\\" in candidate else native_candidate
+    resolved = (root / relative_candidate).resolve()
     if not resolved.is_relative_to(root.resolve()):
         raise ValueError("path leaves collection")
     return resolved
@@ -830,6 +839,21 @@ def _merge_people(state: ReviewState, source_person_id: str, target_person_id: s
     return dict(target)
 
 
+_CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
+
+
+def _send_response_body(handler: BaseHTTPRequestHandler, status: int, content_type: str, data: bytes) -> None:
+    """Send an HTTP response body, ignoring clients that disconnect mid-write."""
+    try:
+        handler.send_response(status)
+        handler.send_header("Content-Type", content_type)
+        handler.send_header("Content-Length", str(len(data)))
+        handler.end_headers()
+        handler.wfile.write(data)
+    except _CLIENT_DISCONNECT_ERRORS:
+        return
+
+
 def make_server(root: Path, workspace: Path, host: str = "127.0.0.1", port: int = 0):
     if host not in {"127.0.0.1", "::1", "localhost"}:
         raise ValueError("face review may only bind to loopback")
@@ -841,32 +865,23 @@ def make_server(root: Path, workspace: Path, host: str = "127.0.0.1", port: int 
     class Handler(BaseHTTPRequestHandler):
         def handle(self):
             with state_lock:
-                super().handle()
+                try:
+                    super().handle()
+                except _CLIENT_DISCONNECT_ERRORS:
+                    return
 
         def send_json(self, value, status=200):
             data = json.dumps(value).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
+            _send_response_body(self, status, "application/json", data)
 
         def send_jpeg(self, data: bytes):
-            self.send_response(200)
-            self.send_header("Content-Type", "image/jpeg")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
+            _send_response_body(self, 200, "image/jpeg", data)
 
         def do_GET(self):
             route = urlparse(self.path).path
             if route == "/":
                 data = HTML.encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
+                _send_response_body(self, 200, "text/html; charset=utf-8", data)
                 return
             if route == "/api/status":
                 return self.send_json({"collection_id": state.review["collection_id"], "local_only": True})
@@ -892,9 +907,9 @@ def make_server(root: Path, workspace: Path, host: str = "127.0.0.1", port: int 
                     row = store.db.execute("SELECT image_path FROM face_occurrences WHERE image_id=? LIMIT 1", (parts[2],)).fetchone()
                     if not row:
                         return self.send_json({"error": "image not found"}, 404)
-                    stored_path = Path(row["image_path"])
-                    path = (root / stored_path).resolve() if not stored_path.is_absolute() else stored_path.resolve()
-                    if not path.is_relative_to(root.resolve()):
+                    try:
+                        path = safe_collection_path(root, str(row["image_path"]))
+                    except ValueError:
                         return self.send_json({"error": "image outside collection"}, 403)
                     try:
                         with Image.open(path) as image:

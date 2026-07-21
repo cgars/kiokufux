@@ -253,6 +253,25 @@ def test_export_gallery_rejects_relative_paths_outside_collection(tmp_path, capl
     assert relative_path in caplog.text
 
 
+def test_export_gallery_sanitizes_generated_media_filenames(tmp_path):
+    db = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite"); db.init_schema()
+    image = tmp_path / "photo.jpg"
+    _image(image)
+    db.upsert_photo(Photo("faces/family portrait #1", image, "photo.jpg", "hash"))
+
+    result = export_gallery(db, tmp_path / "out")
+
+    doc = json.loads((tmp_path / "out" / "gallery.json").read_text())
+    item = doc["items"][0]
+    assert result.exported == 1
+    assert item["image_path"].startswith("images/faces_family_portrait_1-")
+    assert item["image_path"].endswith(".jpg")
+    assert item["thumbnail_path"].startswith("thumbnails/faces_family_portrait_1-")
+    assert "/" not in item["image_path"].removeprefix("images/")
+    assert (tmp_path / "out" / item["image_path"]).is_file()
+    assert (tmp_path / "out" / item["thumbnail_path"]).is_file()
+
+
 def test_export_gallery_uses_exported_image_when_thumbnail_creation_fails(tmp_path, monkeypatch, caplog):
     db = Catalog(tmp_path / ".kiokufux" / "catalog.sqlite"); db.init_schema()
     image = tmp_path / "photo.jpg"

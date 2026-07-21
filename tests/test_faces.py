@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from kiokufux.face_review import make_server, safe_collection_path
+from kiokufux.face_review import HTML, _send_response_body, make_server, safe_collection_path
 from kiokufux.faces import (FaceDetection, FaceStore, ReviewState, boxes_iou,
     cluster_faces, friendly_group_name, normalize_embeddings, scan_faces)
 
@@ -68,6 +68,7 @@ def test_person_rename_preserves_id_and_atomic_json(tmp_path):
 
 def test_path_traversal_and_iou(tmp_path):
     assert safe_collection_path(tmp_path, "photo.jpg") == tmp_path / "photo.jpg"
+    assert safe_collection_path(tmp_path, r"nested\photo.jpg") == tmp_path / "nested" / "photo.jpg"
     try:
         safe_collection_path(tmp_path, "../secret")
     except ValueError:
@@ -75,6 +76,40 @@ def test_path_traversal_and_iou(tmp_path):
     else:
         raise AssertionError("traversal accepted")
     assert boxes_iou((0, 0, 1, 1), (0, 0, 1, 1)) == 1
+
+def test_review_comparison_sources_fit_and_can_scroll_side_by_side():
+    assert ".compare-items.side-by-side" in HTML
+    assert "compareItems.classList.toggle('side-by-side',items.length>1)" in HTML
+    assert "function fitPhoto(item)" in HTML
+    assert "Math.min(viewport.clientWidth/img.naturalWidth,viewport.clientHeight/img.naturalHeight)" in HTML
+
+
+def test_review_response_ignores_client_disconnects():
+    class BrokenWriter:
+        def write(self, _data):
+            raise BrokenPipeError("client closed")
+
+    class Handler:
+        wfile = BrokenWriter()
+
+        def __init__(self):
+            self.calls = []
+
+        def send_response(self, status):
+            self.calls.append(("status", status))
+
+        def send_header(self, name, value):
+            self.calls.append(("header", name, value))
+
+        def end_headers(self):
+            self.calls.append(("end",))
+
+    handler = Handler()
+
+    _send_response_body(handler, 200, "image/jpeg", b"jpeg")
+
+    assert ("status", 200) in handler.calls
+    assert ("header", "Content-Length", "4") in handler.calls
 
 
 def test_threaded_review_server_uses_request_local_sqlite_connections(tmp_path):
@@ -95,6 +130,32 @@ def test_threaded_review_server_uses_request_local_sqlite_connections(tmp_path):
         for client in clients:
             client.join()
         assert responses == [[], [], [], []]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def test_review_source_image_route_accepts_windows_relative_paths(tmp_path):
+    image_path = tmp_path / "nested" / "photo.jpg"
+    image_path.parent.mkdir()
+    Image.new("RGB", (100, 100), "red").save(image_path)
+    workspace = tmp_path / ".kiokufux"
+    with FaceStore(workspace) as store:
+        scan_faces(tmp_path, store, FakeBackend(), minimum_face_size=1)
+        row = store.db.execute("SELECT image_id FROM face_occurrences LIMIT 1").fetchone()
+        store.db.execute("UPDATE face_occurrences SET image_path=? WHERE image_id=?", (r"nested\photo.jpg", row["image_id"]))
+        store.db.commit()
+
+    server = make_server(tmp_path, workspace)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}/api/images/{row['image_id']}/thumbnail"
+        with urllib.request.urlopen(url, timeout=2) as response:
+            assert response.status == 200
+            assert response.headers["Content-Type"] == "image/jpeg"
+            assert response.read().startswith(b"\xff\xd8")
     finally:
         server.shutdown()
         server.server_close()

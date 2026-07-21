@@ -8,7 +8,7 @@ import webbrowser
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PureWindowsPath
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from PIL import Image, ImageOps
 
@@ -76,7 +76,8 @@ select:focus-visible,
 input:focus-visible,
 summary:focus-visible,
 .group-card:focus-visible,
-.face:focus-visible {
+.face:focus-visible,
+.compare-card:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--rust) 70%, white);
   outline-offset: 3px;
 }
@@ -343,11 +344,26 @@ summary:focus-visible,
 .group-card .hint { padding: 0 0.25rem; }
 .group-card .metadata { justify-content: flex-start; padding: 0 0.2rem 0.2rem; }
 
-.face-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
-  gap: 1rem;
-}
+.face-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(175px, 1fr)); gap: 1rem; }
+.review-modes { display:flex; flex-wrap:wrap; gap:.45rem; margin:.9rem 0 1rem; }
+.mode-button[aria-pressed="true"], .decision-button[aria-pressed="true"] { border-color: var(--rust); background:#fff3e8; color:var(--rust-dark); box-shadow:0 0 0 3px rgba(169,87,53,.13); }
+.comparison-workbench { display:grid; grid-template-columns:minmax(210px,280px) minmax(0,1fr); gap:1rem; align-items:start; }
+.pinned-reference { position:sticky; top:1rem; padding:.85rem; border:1px solid var(--line); border-radius:1rem; background:var(--paper); box-shadow:0 8px 24px rgba(23,36,31,.08); }
+.pinned-reference img { width:100%; aspect-ratio:4/3; object-fit:cover; border-radius:.75rem; }
+.compare-matrix { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr)); gap:.85rem; }
+@container (min-width: 760px) { .compare-matrix { grid-template-columns: repeat(4, 1fr); } }
+.compare-card { position:relative; display:grid; gap:.5rem; padding:.55rem; border:1px solid var(--line); border-radius:.95rem; background:var(--paper-light); cursor:pointer; box-shadow:0 7px 20px rgba(23,36,31,.06); }
+.compare-card.active { border-color:var(--rust); box-shadow:0 0 0 3px rgba(169,87,53,.15); }
+.compare-card.match { border-color:#748166; background:#f5f8ec; }
+.compare-card.out { border-color:#b55a4f; background:#fff1ec; }
+.compare-card img { width:100%; aspect-ratio:4/3; object-fit:cover; border-radius:.68rem; }
+.compare-card .card-actions, .decision-row { display:flex; flex-wrap:wrap; gap:.35rem; }
+.compare-card button, .decision-button, .mode-button { min-height:2.25rem; padding:.4rem .55rem; border:1px solid var(--line); border-radius:.6rem; background:var(--paper-light); color:var(--pine-950); cursor:pointer; }
+.context-levels { display:flex; gap:.35rem; flex-wrap:wrap; margin:.5rem 0 1rem; }
+.context-mode .compare-card img { aspect-ratio:3/2; }
+.pair-mode .compare-matrix { grid-template-columns:minmax(0,1fr); }
+.selected-info { margin-top:1rem; padding:.8rem; border:1px solid var(--line); border-radius:.85rem; background:rgba(235,228,213,.5); }
+.more-row { margin-top:1rem; text-align:center; }
 
 .face {
   position: relative;
@@ -690,6 +706,8 @@ dialog::backdrop {
   .workspace { grid-template-columns: 1fr; }
   .actions-panel { position: static; order: -1; }
   .compare-item { grid-template-columns: 1fr; }
+  .comparison-workbench { grid-template-columns:1fr; }
+  .pinned-reference { position:static; }
   .reference-panel { max-width: none; display: grid; grid-template-columns: 110px 1fr; gap: 0 1rem; }
   .reference-panel img { grid-row: 1 / 4; }
 }
@@ -717,11 +735,11 @@ dialog::backdrop {
 </style>
 </head>
 <body>
-<div class="app-shell"><header class="topbar"><div class="brand">KiokuFux · People</div><div class="settings">Local archive workbench</div></header><nav class="tabs" aria-label="Face review sections"><button class="tab active" onclick="showGroups()">Groups</button><button class="tab" onclick="showUngrouped()">Ungrouped</button><button class="tab" onclick="showConfirmed()">Confirmed</button><button class="tab" onclick="showPlaceholder('Needs review')">Needs review</button></nav><main class="workspace"><section class="content-card"><div id="list"><div class="section-head"><div><div class="eyebrow">Anonymous discovery</div><h1 class="title">Possible recurring people</h1><p class="subtitle">Review machine-generated groups without turning them into identities.</p></div><div class="metadata"><span class="pill">Local only</span><span class="pill">No names proposed</span></div></div><div id="groups" class="group-list"></div></div><div id="detail" class="hidden"><div class="section-head"><div><button class="btn" onclick="showGroups()">← All groups</button><div class="eyebrow" style="margin-top:18px">Possible recurring person</div><h1 id="groupTitle" class="title"></h1><p id="groupMeta" class="subtitle"></p></div><div class="metadata" id="groupBadges"></div></div><p class="hint">Click a face to see it in the source photograph. Select one or more faces for comparison and corrections.</p><div id="faces" class="face-grid"></div></div></section><aside class="actions-panel" id="actions"><h2>Actions</h2><p class="hint" id="selectionHint">Open a group to review its face occurrences.</p><div class="action-stack"><button class="btn primary" onclick="confirmPerson()">Confirm person</button><button class="btn secondary" onclick="compareSelected()">Compare selected <span class="shortcut">C</span></button><button class="btn secondary" onclick="act('split')">Split selected <span class="shortcut">S</span></button><button class="btn secondary" onclick="createGroupFromSelected()">Create group from selected</button><select class="merge-select" id="mergeTarget" aria-label="Merge with another group"></select><button class="btn secondary" onclick="mergeGroup()">Merge into selected group</button><button class="btn secondary" onclick="reviewGroup()">Mark group reviewed <span class="shortcut">R</span></button><select class="merge-select" id="personMergeTarget" aria-label="Merge with another confirmed person"></select><button class="btn secondary" onclick="mergeConfirmedPerson()">Merge confirmed people</button></div><details class="danger-menu"><summary>More actions</summary><button class="btn danger" onclick="act('reject-face')">Reject detection</button><button class="btn danger" onclick="act('exclude-from-clustering')">Exclude poor crop</button></details></aside></main></div><div id="toast" class="toast" role="status" aria-live="polite"></div>
+<div class="app-shell"><header class="topbar"><div class="brand">KiokuFux · People</div><div class="settings">Local archive workbench</div></header><nav class="tabs" aria-label="Face review sections"><button class="tab active" onclick="showGroups()">Groups</button><button class="tab" onclick="showUngrouped()">Ungrouped</button><button class="tab" onclick="showConfirmed()">Confirmed</button><button class="tab" onclick="showPlaceholder('Needs review')">Needs review</button></nav><main class="workspace"><section class="content-card"><div id="list"><div class="section-head"><div><div class="eyebrow">Anonymous discovery</div><h1 class="title">Possible recurring people</h1><p class="subtitle">Review machine-generated groups without turning them into identities.</p></div><div class="metadata"><span class="pill">Local only</span><span class="pill">No names proposed</span></div></div><div id="groups" class="group-list"></div></div><div id="detail" class="hidden"><div class="section-head"><div><button class="btn" onclick="showGroups()">← All groups</button><div class="eyebrow" style="margin-top:18px">Possible recurring person</div><h1 id="groupTitle" class="title"></h1><p id="groupMeta" class="subtitle"></p></div><div class="metadata" id="groupBadges"></div></div><p class="hint">Click a face to see it in the source photograph. Select one or more faces for comparison and corrections.</p><div id="groupCompare" class="hidden"></div><div id="faces" class="face-grid"></div></div></section><aside class="actions-panel" id="actions"><h2>Actions</h2><p class="hint" id="selectionHint">Open a group to review its face occurrences.</p><div class="action-stack"><button class="btn primary" onclick="confirmPerson()">Confirm person</button><button class="btn secondary" onclick="compareSelected()">Compare selected <span class="shortcut">C</span></button><button class="btn secondary" onclick="act('split')">Split selected <span class="shortcut">S</span></button><button class="btn secondary" onclick="createGroupFromSelected()">Create group from selected</button><select class="merge-select" id="mergeTarget" aria-label="Merge with another group"></select><button class="btn secondary" onclick="mergeGroup()">Merge into selected group</button><button class="btn secondary" onclick="reviewGroup()">Mark group reviewed <span class="shortcut">R</span></button><select class="merge-select" id="personMergeTarget" aria-label="Merge with another confirmed person"></select><button class="btn secondary" onclick="mergeConfirmedPerson()">Merge confirmed people</button></div><details class="danger-menu"><summary>More actions</summary><button class="btn danger" onclick="act('reject-face')">Reject detection</button><button class="btn danger" onclick="act('exclude-from-clustering')">Exclude poor crop</button></details></aside></main></div><div id="toast" class="toast" role="status" aria-live="polite"></div>
 <dialog id="context"><div class="dialog-head"><h2 id="compareTitle">Face comparison</h2><button class="btn" onclick="context.close()">Close</button></div><div id="compareItems" class="compare-items"></div></dialog>
 <dialog id="confirmDialog" class="name-dialog" aria-labelledby="confirmTitle"><form class="name-form" onsubmit="submitPerson(event)"><div class="eyebrow">Human confirmation</div><h2 id="confirmTitle">Confirm this person</h2><p>A name is optional. Leaving it blank keeps the permanent anonymous friendly name.</p><label for="personName">Display name</label><input id="personName" type="text" autocomplete="off" placeholder="Optional name"><div class="form-actions"><button class="btn" type="button" onclick="confirmDialog.close()">Cancel</button><button class="btn primary" type="submit">Confirm person</button></div></form></dialog>
 <script>
-let collectionId, currentGroup, currentPerson, allGroups=[], allPeople=[];
+let collectionId, currentGroup, currentPerson, allGroups=[], allPeople=[], compareMode="matrix", contextLevel="face", pinnedFaceId=null, activeFaceId=null, tempDecisions={}, visibleLimit=24;
 const api=async(path,options={})=>{let r=await fetch(path,options);let data=await r.json();if(!r.ok)throw Error(data.error||r.statusText);return data};
 const mutate=(path,body={})=>api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({collection_id:collectionId,...body})});
 function notify(message,type='ok'){toast.textContent=message;toast.className='toast show'+(type==='error'?' error':'');clearTimeout(notify.timer);notify.timer=setTimeout(()=>toast.className='toast',3200)}
@@ -735,15 +753,29 @@ async function showGroups(){currentPerson=null;setActiveTab('Groups');setActionM
 function groupCard(g){let state=g.conflict?'Conflict':g.review_state.replace('_',' ');return `<article class="group-card" role="button" tabindex="0" onclick="openGroup('${g.group_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openGroup('${g.group_id}')}"><img src="/api/faces/${g.representative_face_id}/thumbnail" alt="Representative face for ${g.friendly_id}"><div><b>${g.friendly_id}</b><div class="hint">Possible recurring person</div></div><div class="metadata"><span class="pill">${g.photo_count} photos</span><span class="pill">${g.face_count} occurrences</span><span class="pill ${g.conflict?'warning':''}">${state}</span></div></article>`}
 async function showConfirmed(){currentGroup=null;currentPerson=null;setActiveTab('Confirmed');setActionMode('browse');setListHeader('Known with care','Confirmed people','Only people you explicitly confirm receive a durable identity.',['User confirmed','Local only']);detail.classList.add('hidden');list.classList.remove('hidden');groups.className='group-list';allPeople=await api('/api/people');groups.innerHTML=allPeople.length?allPeople.map(personCard).join(''):'<p class="empty">No confirmed people yet. Review a coherent group, then choose Confirm person.</p>';selectionHint.textContent='Open a confirmed person to inspect their photographs or merge duplicates.';mergeTarget.innerHTML='<option value="">Merge with…</option>';personMergeTarget.innerHTML='<option value="">Merge confirmed person with…</option>'}
 function personCard(p){let title=p.display_name||p.friendly_name;let secondary=p.display_name?`<div class="hint">${p.friendly_name} · permanent friendly name</div>`:'<div class="hint">Unnamed confirmed person</div>';let image=p.representative_face_id?`<img src="/api/faces/${p.representative_face_id}/thumbnail" alt="Representative face for ${title}">`:'';return `<article class="group-card" role="button" tabindex="0" onclick="openPerson('${p.person_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openPerson('${p.person_id}')}">${image}<div><b>${title}</b>${secondary}</div><div class="metadata"><span class="pill">confirmed</span><span class="pill">${p.face_count} faces</span><span class="pill">${p.photo_count} photos</span></div></article>`}
-async function openPerson(id){currentGroup=null;currentPerson=await api('/api/people/'+id);setActionMode('person');setDetailKind('Confirmed person','All confirmed people',showConfirmed);list.classList.add('hidden');detail.classList.remove('hidden');let title=currentPerson.display_name||currentPerson.friendly_name;groupTitle.textContent=title;groupMeta.textContent=`${currentPerson.face_count} confirmed faces · ${currentPerson.photo_count} photographs`;groupBadges.innerHTML=`<span class="pill">confirmed person</span><span class="pill">${currentPerson.friendly_name}</span>`;faces.innerHTML=currentPerson.faces.map(faceCard).join('');personMergeTarget.innerHTML='<option value="">Merge confirmed person with…</option>'+allPeople.filter(p=>p.person_id!==id).map(p=>`<option value="${p.person_id}">${p.display_name||p.friendly_name} · ${p.face_count} faces</option>`).join('');selectionHint.textContent='Click a confirmed face to open its source photograph.'}
+async function openPerson(id){currentGroup=null;currentPerson=await api('/api/people/'+id);setActionMode('person');setDetailKind('Confirmed person','All confirmed people',showConfirmed);list.classList.add('hidden');detail.classList.remove('hidden');let title=currentPerson.display_name||currentPerson.friendly_name;groupTitle.textContent=title;groupMeta.textContent=`${currentPerson.face_count} confirmed faces · ${currentPerson.photo_count} photographs`;groupBadges.innerHTML=`<span class="pill">confirmed person</span><span class="pill">${currentPerson.friendly_name}</span>`;groupCompare.classList.add('hidden');faces.classList.remove('hidden');faces.innerHTML=currentPerson.faces.map(faceCard).join('');personMergeTarget.innerHTML='<option value="">Merge confirmed person with…</option>'+allPeople.filter(p=>p.person_id!==id).map(p=>`<option value="${p.person_id}">${p.display_name||p.friendly_name} · ${p.face_count} faces</option>`).join('');selectionHint.textContent='Click a confirmed face to open its source photograph.'}
 async function showUngrouped(){currentGroup=null;currentPerson=null;setActiveTab('Ungrouped');setActionMode('ungrouped');setListHeader('Loose photographs','Ungrouped detections','Select related face crops to begin a new anonymous recurring-person group.',['Not identified','Local only']);detail.classList.add('hidden');list.classList.remove('hidden');groups.className='face-grid';let fs=await api('/api/ungrouped');groups.innerHTML=fs.length?fs.map(faceCard).join(''):'<p class="empty">No ungrouped faces.</p>';selectionHint.textContent='Select two or more ungrouped faces with the checkmark, then create a group.';mergeTarget.innerHTML='<option value="">Merge with…</option>'}
 function showPlaceholder(label){currentGroup=null;currentPerson=null;setActiveTab(label);setActionMode('browse');setListHeader('Review queue',label,'Decisions that need another look will collect here.',['Local only']);detail.classList.add('hidden');list.classList.remove('hidden');groups.className='group-list';groups.innerHTML=`<p class="empty">${label} will appear here as review decisions are available.</p>`;selectionHint.textContent='Choose Groups or Ungrouped to continue reviewing.'}
 function confidenceBadge(f){let value=Math.round((f.confidence||0)*100);let low=value<90;return `<span class="quality-badge ${low?'low':''}">${low?'Low confidence '+value+'%':'Clear crop'}</span>`}
 function faceCard(f){return `<article class="face" role="button" tabindex="0" aria-pressed="false" data-id="${f.face_id}" onclick="faceClick(event,this,'${f.image_id}','${f.face_id}')" onkeydown="if(event.key==='Enter'){viewContext(event,'${f.image_id}','${f.face_id}')}else if(event.key===' '){event.preventDefault();toggleFace(this)}"><input type="checkbox" aria-label="Select face"><span class="checkmark">✓</span><img src="/api/faces/${f.face_id}/thumbnail" alt="Detected face"><div class="face-caption"><span>Open photograph</span>${confidenceBadge(f)}</div></article>`}
-async function openGroup(id){currentPerson=null;currentGroup=await api('/api/groups/'+id);setActionMode('group');setDetailKind('Possible recurring person','All groups',showGroups);list.classList.add('hidden');detail.classList.remove('hidden');groupTitle.textContent=currentGroup.friendly_id;groupMeta.textContent=`${currentGroup.faces.length} occurrences · possible recurring person`;groupBadges.innerHTML=`<span class="pill">${currentGroup.review_state.replace('_',' ')}</span>${currentGroup.conflict?'<span class="pill warning">same-photo conflict</span>':''}`;faces.innerHTML=currentGroup.faces.map(faceCard).join('');mergeTarget.innerHTML='<option value="">Merge with…</option>'+allGroups.filter(g=>g.group_id!==id).map(g=>`<option value="${g.group_id}">${g.friendly_id} · ${g.face_count} faces</option>`).join('');selectionHint.textContent='No faces selected.'}
+async function openGroup(id){currentPerson=null;currentGroup=await api('/api/groups/'+id);setActionMode('group');setDetailKind('Possible recurring person','All groups',showGroups);list.classList.add('hidden');detail.classList.remove('hidden');pinnedFaceId=currentGroup.representative_face_id||bestFace(currentGroup.faces).face_id;activeFaceId=currentGroup.faces.find(f=>f.face_id!==pinnedFaceId)?.face_id||pinnedFaceId;tempDecisions={};visibleLimit=24;groupTitle.textContent=currentGroup.friendly_id;let photos=new Set(currentGroup.faces.map(f=>f.image_id)).size;groupMeta.textContent=`${currentGroup.faces.length} occurrences · ${photos} photographs`;groupBadges.innerHTML=`<span class="pill">${currentGroup.review_state.replace('_',' ')}</span>${currentGroup.conflict?'<span class="pill warning">same-photo conflict</span>':'<span class="pill">no conflicts</span>'}`;faces.classList.add('hidden');renderComparisonWorkbench();mergeTarget.innerHTML='<option value="">Merge with…</option>'+allGroups.filter(g=>g.group_id!==id).map(g=>`<option value="${g.group_id}">${g.friendly_id} · ${g.face_count} faces</option>`).join('');selectionHint.textContent='No faces selected.'}
+
+function bestFace(list){return [...list].sort((a,b)=>(b.quality??b.confidence??0)-(a.quality??a.confidence??0))[0]}
+function occurrenceNumber(face){return currentGroup.faces.findIndex(f=>f.face_id===face.face_id)+1}
+function contextSrc(face,level=contextLevel){return `/api/faces/${face.face_id}/context?level=${level}`}
+function renderComparisonWorkbench(){if(!currentGroup)return;groupCompare.classList.remove('hidden');let ref=currentGroup.faces.find(f=>f.face_id===pinnedFaceId)||bestFace(currentGroup.faces);let others=currentGroup.faces.filter(f=>f.face_id!==ref.face_id);if(compareMode==='pair')others=others.filter(f=>f.face_id===activeFaceId).slice(0,1);let shown=others.slice(0,visibleLimit);groupCompare.innerHTML=`<div class="review-modes" role="toolbar" aria-label="Comparison modes"><button class="mode-button" aria-pressed="${compareMode==='matrix'}" onclick="setMode('matrix')">Matrix</button><button class="mode-button" aria-pressed="${compareMode==='context'}" onclick="setMode('context')">Kontext</button><button class="mode-button" aria-pressed="${compareMode==='pair'}" onclick="setMode('pair')">1:1</button></div><div class="context-levels" role="toolbar" aria-label="Context crop levels"><button class="mode-button" aria-pressed="${contextLevel==='face'}" onclick="setLevel('face')">Gesicht</button><button class="mode-button" aria-pressed="${contextLevel==='person'}" onclick="setLevel('person')">Person</button><button class="mode-button" aria-pressed="${contextLevel==='scene'}" onclick="setLevel('scene')">Szene</button></div><section class="comparison-workbench ${compareMode}-mode"><aside class="pinned-reference" aria-label="Angeheftete Referenz"><div class="eyebrow">Angeheftete Referenz</div><h3>Occurrence ${occurrenceNumber(ref)+1}</h3><img loading="eager" src="${contextSrc(ref,'face')}" alt="Pinned reference face"><button class="btn" onclick="openPhotoDialog('${ref.face_id}')">Fotografie öffnen</button></aside><div><div class="compare-matrix" role="list">${shown.map(compareCard).join('')}</div>${others.length>shown.length?'<div class="more-row"><button class="btn" onclick="visibleLimit+=24;renderComparisonWorkbench()">Weitere anzeigen</button></div>':''}<div id="selectedInfo" class="selected-info" aria-live="polite">${selectedInfo()}</div></div></section>`}
+function compareCard(f){let i=occurrenceNumber(f)+1,dec=tempDecisions[f.face_id]||'',active=f.face_id===activeFaceId?' active':'';return `<article class="compare-card ${active} ${dec}" role="button" tabindex="0" data-id="${f.face_id}" onclick="chooseOccurrence('${f.face_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();chooseOccurrence('${f.face_id}')}" aria-label="Occurrence ${i}"><img loading="lazy" src="${contextSrc(f,compareMode==='matrix'?'face':contextLevel)}" alt="Occurrence ${i} context"><div><b>#${i}</b> ${confidenceBadge(f)}</div><div class="card-actions"><button onclick="event.stopPropagation();pinReference('${f.face_id}')">Als Referenz</button><button onclick="event.stopPropagation();openPhotoDialog('${f.face_id}')">Fotografie öffnen</button></div><div class="decision-row">${decisionButton(f,'match','Passt')}${decisionButton(f,'unsure','Unsicher')}${decisionButton(f,'out','Nicht zugehörig')}</div></article>`}
+function decisionButton(f,value,label){return `<button class="decision-button" aria-pressed="${tempDecisions[f.face_id]===value}" onclick="event.stopPropagation();markTemp('${f.face_id}','${value}')">${label}</button>`}
+function selectedInfo(){let f=currentGroup.faces.find(x=>x.face_id===activeFaceId)||currentGroup.faces[0];if(!f)return 'No occurrence selected.';return `<b>Occurrence ${occurrenceNumber(f)+1}</b><br>File: ${f.image_path||f.image_id}<br>Date: ${f.scanned_at||'not available'}<br>${confidenceBadge(f)}<br>Conflict: ${currentGroup.conflict?'same photograph conflict':'none'}<br>Temporary mark: ${tempDecisions[f.face_id]||'none'}`}
+function setMode(mode){compareMode=mode;renderComparisonWorkbench()}
+function setLevel(level){contextLevel=level;renderComparisonWorkbench()}
+function chooseOccurrence(faceId){activeFaceId=faceId;renderComparisonWorkbench()}
+function pinReference(faceId){pinnedFaceId=faceId;if(activeFaceId===faceId)activeFaceId=currentGroup.faces.find(f=>f.face_id!==faceId)?.face_id||faceId;renderComparisonWorkbench()}
+function markTemp(faceId,value){tempDecisions[faceId]=tempDecisions[faceId]===value?'':value;let card=document.querySelector(`.compare-card[data-id="${faceId}"]`);if(value==='out'&&card&&!card.classList.contains('selected'))toggleFace(card);renderComparisonWorkbench()}
+function openPhotoDialog(faceId){let face=(currentGroup?.faces||currentPerson?.faces||[]).find(f=>f.face_id===faceId);if(face)showComparison([face])}
 function faceClick(e,el,imageId,faceId){if(e.target.closest('.checkmark')||e.shiftKey||e.metaKey||e.ctrlKey){toggleFace(el);return}viewContext(e,imageId,faceId)}
-function toggleFace(el){el.classList.toggle('selected');let isSelected=el.classList.contains('selected');el.querySelector('input').checked=isSelected;el.setAttribute('aria-pressed',String(isSelected));let count=selected().length;selectionHint.textContent=count?`${count} selected. Press C to compare, S to split, R to mark reviewed.`:'No faces selected.'}
-const selected=()=>[...document.querySelectorAll('.face.selected')].map(x=>x.dataset.id);
+function toggleFace(el){el.classList.toggle('selected');let isSelected=el.classList.contains('selected');let input=el.querySelector('input');if(input)input.checked=isSelected;el.setAttribute('aria-pressed',String(isSelected));let count=selected().length;selectionHint.textContent=count?`${count} selected. Press C to compare, S to split, R to mark reviewed.`:'No faces selected.'}
+const selected=()=>[...document.querySelectorAll('.face.selected,.compare-card.selected')].map(x=>x.dataset.id);
 async function act(name){let ids=selected();if(!ids.length)return notify('Select at least one face.','error');if(!currentGroup)return notify('Open a group before using this action, or create a group from ungrouped selections.','error');try{await withFeedback(name.replaceAll('-',' '),()=>mutate('/api/review/'+name,{group_id:currentGroup.group_id,face_ids:ids}));await openGroup(currentGroup.group_id)}catch(e){}}
 async function mergeGroup(){if(!currentGroup)return notify('Open a group before merging.','error');if(!mergeTarget.value)return notify('Choose another group.','error');try{await withFeedback('Merge',()=>mutate('/api/review/merge',{source_group_id:currentGroup.group_id,target_group_id:mergeTarget.value}));await showGroups()}catch(e){}}
 async function reviewGroup(){if(!currentGroup)return notify('Open a group before marking it reviewed.','error');try{await withFeedback('Review state',()=>mutate('/api/review/mark-group-reviewed',{group_id:currentGroup.group_id}));await openGroup(currentGroup.group_id)}catch(e){}}
@@ -767,6 +799,61 @@ start().catch(e=>notify(e.message,'error'));
 </body>
 </html>"""
 
+
+
+_CONTEXT_LEVELS = {"face": (1.7, 360), "person": (5.0, 900), "scene": (0.0, 1400)}
+
+def _face_row(store: FaceStore, face_id: str):
+    return store.db.execute("""SELECT face_id,image_id,image_path,x1,y1,x2,y2,confidence,quality,content_fingerprint,scanned_at
+      FROM face_occurrences WHERE face_id=?""", (face_id,)).fetchone()
+
+def _context_crop_box(row, width: int, height: int, level: str, aspect: float = 4 / 3) -> tuple[int, int, int, int]:
+    if level == "scene":
+        return (0, 0, width, height)
+    x1, y1, x2, y2 = row["x1"] * width, row["y1"] * height, row["x2"] * width, row["y2"] * height
+    scale = _CONTEXT_LEVELS[level][0]
+    box_w, box_h = max(1.0, x2 - x1) * scale, max(1.0, y2 - y1) * scale
+    if box_w / box_h < aspect:
+        box_w = box_h * aspect
+    else:
+        box_h = box_w / aspect
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    left, top = cx - box_w / 2, cy - box_h / 2
+    right, bottom = cx + box_w / 2, cy + box_h / 2
+    if left < 0:
+        right -= left; left = 0
+    if top < 0:
+        bottom -= top; top = 0
+    if right > width:
+        left -= right - width; right = width
+    if bottom > height:
+        top -= bottom - height; bottom = height
+    left, top = max(0, left), max(0, top)
+    return (int(round(left)), int(round(top)), int(round(right)), int(round(bottom)))
+
+def _render_face_context(root: Path, workspace: Path, store: FaceStore, face_id: str, level: str) -> bytes | None:
+    if level not in _CONTEXT_LEVELS:
+        raise ValueError("unsupported context level")
+    row = _face_row(store, face_id)
+    if row is None:
+        return None
+    cache_key = f"{row['content_fingerprint']}-{face_id}-{level}.jpg"
+    cache_path = workspace / "cache" / "face-context" / cache_key
+    if cache_path.exists():
+        return cache_path.read_bytes()
+    path = safe_collection_path(root, str(row["image_path"]))
+    if not path.exists():
+        return None
+    with Image.open(path) as image:
+        rendered = ImageOps.exif_transpose(image).convert("RGB")
+    crop = rendered.crop(_context_crop_box(row, rendered.width, rendered.height, level))
+    max_size = _CONTEXT_LEVELS[level][1]
+    crop.thumbnail((max_size, max_size))
+    output = io.BytesIO()
+    crop.save(output, "JPEG", quality=88)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_bytes(output.getvalue())
+    return output.getvalue()
 
 def safe_collection_path(root: Path, candidate: str) -> Path:
     windows_candidate = PureWindowsPath(candidate)
@@ -799,7 +886,7 @@ def _confirmed_person(store: FaceStore, state: ReviewState, person_id: str, *, i
     person = person or {"person_id": person_id, "friendly_name": person_id, "display_name": None}
     if face_ids:
         placeholders = ",".join("?" for _ in face_ids)
-        face_rows = store.db.execute(f"""SELECT face_id,image_id,confidence,quality,x1,y1,x2,y2 FROM face_occurrences
+        face_rows = store.db.execute(f"""SELECT face_id,image_id,confidence,quality,x1,y1,x2,y2,image_path,scanned_at FROM face_occurrences
           WHERE face_id IN ({placeholders}) ORDER BY face_id""", face_ids).fetchall()
     else:
         face_rows = []
@@ -903,6 +990,15 @@ def make_server(root: Path, workspace: Path, host: str = "127.0.0.1", port: int 
                     row = store.db.execute("SELECT face_id FROM face_occurrences WHERE face_id=?", (parts[2],)).fetchone()
                     path = workspace / "cache" / "face-thumbnails" / f"{parts[2]}.jpg"
                     return self.send_jpeg(path.read_bytes()) if row and path.exists() else self.send_json({"error": "face not found"}, 404)
+                if len(parts) == 4 and parts[:2] == ["api", "faces"] and parts[3] == "context":
+                    level = parse_qs(urlparse(self.path).query).get("level", ["face"])[0]
+                    try:
+                        data = _render_face_context(root, workspace, store, parts[2], level)
+                    except ValueError:
+                        return self.send_json({"error": "unsupported context level"}, 400)
+                    except (OSError, ValueError):
+                        return self.send_json({"error": "image unavailable"}, 404)
+                    return self.send_jpeg(data) if data else self.send_json({"error": "face not found"}, 404)
                 if len(parts) == 4 and parts[:2] == ["api", "images"] and parts[3] == "thumbnail":
                     row = store.db.execute("SELECT image_path FROM face_occurrences WHERE image_id=? LIMIT 1", (parts[2],)).fetchone()
                     if not row:

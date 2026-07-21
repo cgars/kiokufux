@@ -139,7 +139,7 @@ class FaceStore:
         if group is None:
             return None
         faces = self.db.execute("""SELECT f.face_id,f.image_id,f.confidence,f.quality,
-          f.x1,f.y1,f.x2,f.y2 FROM face_group_members m
+          f.x1,f.y1,f.x2,f.y2,f.image_path,f.scanned_at FROM face_group_members m
           JOIN face_occurrences f USING(face_id) WHERE m.group_id=? ORDER BY f.face_id""", (group_id,)).fetchall()
         result = dict(group)
         result["friendly_id"] = friendly_group_name(group_id)
@@ -148,7 +148,7 @@ class FaceStore:
         return result
 
     def ungrouped(self) -> list[dict[str, Any]]:
-        rows = self.db.execute("""SELECT f.face_id,f.image_id,f.confidence,f.quality
+        rows = self.db.execute("""SELECT f.face_id,f.image_id,f.confidence,f.quality,f.image_path,f.scanned_at
           FROM face_occurrences f LEFT JOIN face_group_members m USING(face_id)
           WHERE m.face_id IS NULL AND f.excluded=0 ORDER BY f.face_id""").fetchall()
         return [dict(row) for row in rows]

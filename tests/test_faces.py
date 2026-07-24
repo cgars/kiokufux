@@ -410,7 +410,8 @@ def test_comparison_workbench_html_wiring_accessibility_and_temporary_decisions(
     assert "loading=\"lazy\"" not in HTML
     assert "Nicht zugehörig" in HTML and "tempDecisions" in HTML
     assert "mutate('/api/review/" in HTML
-    assert "markTemp" in HTML and "toggleFace(card)" in HTML
+    assert "markTemp" in HTML and "toggleSplitSelection" in HTML
+    assert "Für Split auswählen" in HTML and "splitSelection" in HTML
     subprocess.run(["node", "--check"], input=HTML.split("<script>", 1)[1].split("</script>", 1)[0], text=True, check=True)
 
 

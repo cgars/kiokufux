@@ -1,3 +1,4 @@
+import inspect
 import json
 import threading
 import subprocess
@@ -363,7 +364,7 @@ def test_face_context_endpoint_levels_cache_invalid_and_edge_crop(tmp_path):
             assert data.startswith(b"\xff\xd8")
             sizes[level] = Image.open(__import__('io').BytesIO(data)).size
         assert sizes["face"][0] <= 360 and sizes["person"][0] <= 900 and max(sizes["scene"]) <= 1400
-        assert list((workspace / "cache" / "face-context").glob(f"*-{face_id}-face.jpg"))
+        assert list((workspace / "cache" / "face-review").glob("*/face-context/face/*.jpg"))
         try:
             urllib.request.urlopen(base + "/api/faces/not-a-face/context?level=face")
         except urllib.error.HTTPError as error:
@@ -405,6 +406,7 @@ def test_comparison_workbench_html_wiring_accessibility_and_temporary_decisions(
     assert "aria-pressed" in HTML and "aria-label=\"Comparison modes\"" in HTML
     assert "class=\"context-thumb\" data-src" in HTML
     assert "IntersectionObserver" in HTML and "hydrateContextImages" in HTML
+    assert "maxActiveImageLoads=4" in HTML and "pumpImageQueue" in HTML
     assert "loading=\"lazy\"" not in HTML
     assert "Nicht zugehörig" in HTML and "tempDecisions" in HTML
     assert "mutate('/api/review/" in HTML
@@ -420,3 +422,60 @@ def test_groups_of_two_three_and_many_have_pinned_matrix_context_and_pair_contro
         assert "others.slice(0,visibleLimit)" in HTML
         assert "rootMargin:'360px 0px'" in HTML
         assert len(faces) == count
+
+
+def test_warm_context_cache_avoids_reopening_original_and_supports_304(tmp_path, monkeypatch):
+    Image.new("RGB", (120, 120), "red").save(tmp_path / "one.jpg")
+    workspace = tmp_path / ".kiokufux"
+    with FaceStore(workspace) as store:
+        scan_faces(tmp_path, store, FakeBackend(), minimum_face_size=1)
+        face_id = store.db.execute("SELECT face_id FROM face_occurrences").fetchone()[0]
+    server, thread, base = _served(tmp_path, workspace)
+    try:
+        with urllib.request.urlopen(base + f"/api/faces/{face_id}/context?level=face") as response:
+            etag = response.headers["ETag"]
+        import kiokufux.face_review as face_review_module
+        monkeypatch.setattr(face_review_module.Image, "open", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("warm cache reopened original")))
+        request = urllib.request.Request(base + f"/api/faces/{face_id}/context?level=face", headers={"If-None-Match": etag})
+        try:
+            urllib.request.urlopen(request)
+        except urllib.error.HTTPError as error:
+            assert error.code == 304
+        else:
+            raise AssertionError("conditional request did not return 304")
+    finally:
+        server.shutdown(); server.server_close(); thread.join()
+
+
+def test_full_photo_preview_is_cached_and_custom_cache_is_namespaced(tmp_path, monkeypatch):
+    Image.new("RGB", (160, 120), "blue").save(tmp_path / "one.jpg")
+    cache_dir = tmp_path / "native-cache"
+    workspace = tmp_path / ".kiokufux"
+    with FaceStore(workspace) as store:
+        scan_faces(tmp_path, store, FakeBackend(), minimum_face_size=1)
+        image_id = store.db.execute("SELECT image_id FROM face_occurrences").fetchone()[0]
+    server = make_server(tmp_path, workspace, cache_dir=cache_dir)
+    collection_id = ReviewState.load_existing(workspace)["collection_id"][:32]
+    thread = threading.Thread(target=server.serve_forever); thread.start()
+    try:
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        with urllib.request.urlopen(base + f"/api/images/{image_id}/thumbnail") as response:
+            assert response.read().startswith(b"\xff\xd8")
+        assert list((cache_dir / "face-review" / collection_id / "image-previews").glob("*.jpg"))
+        import kiokufux.face_review as face_review_module
+        monkeypatch.setattr(face_review_module.Image, "open", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("warm preview reopened original")))
+        with urllib.request.urlopen(base + f"/api/images/{image_id}/thumbnail") as response:
+            assert response.status == 200
+    finally:
+        server.shutdown(); server.server_close(); thread.join()
+
+
+def test_read_only_handlers_are_not_wrapped_by_global_state_lock():
+    import kiokufux.face_review as face_review_module
+    source = inspect.getsource(face_review_module.make_server)
+    handle_body = source.split("def handle(self):", 1)[1].split("def send_json", 1)[0]
+    post_body = source.split("def do_POST(self):", 1)[1].split("def log_message", 1)[0]
+    assert "with state_lock" not in handle_body
+    assert "with state_lock" in post_body
+    assert "_DERIVATIVE_CACHE.semaphore" in inspect.getsource(face_review_module._render_cached_jpeg)
+    assert "os.replace" in inspect.getsource(face_review_module._atomic_write)

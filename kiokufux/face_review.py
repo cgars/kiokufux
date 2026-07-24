@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
+import logging
+import os
+import tempfile
 import threading
+import time
 import uuid
 import webbrowser
 from datetime import datetime, timezone
@@ -739,7 +744,7 @@ dialog::backdrop {
 <dialog id="context"><div class="dialog-head"><h2 id="compareTitle">Face comparison</h2><button class="btn" onclick="context.close()">Close</button></div><div id="compareItems" class="compare-items"></div></dialog>
 <dialog id="confirmDialog" class="name-dialog" aria-labelledby="confirmTitle"><form class="name-form" onsubmit="submitPerson(event)"><div class="eyebrow">Human confirmation</div><h2 id="confirmTitle">Confirm this person</h2><p>A name is optional. Leaving it blank keeps the permanent anonymous friendly name.</p><label for="personName">Display name</label><input id="personName" type="text" autocomplete="off" placeholder="Optional name"><div class="form-actions"><button class="btn" type="button" onclick="confirmDialog.close()">Cancel</button><button class="btn primary" type="submit">Confirm person</button></div></form></dialog>
 <script>
-let collectionId, currentGroup, currentPerson, allGroups=[], allPeople=[], compareMode="matrix", contextLevel="face", pinnedFaceId=null, activeFaceId=null, tempDecisions={}, visibleLimit=24, contextImageObserver=null;
+let collectionId, currentGroup, currentPerson, allGroups=[], allPeople=[], compareMode="matrix", contextLevel="face", pinnedFaceId=null, activeFaceId=null, tempDecisions={}, visibleLimit=24, contextImageObserver=null, imageQueue=[], activeImageLoads=0, maxActiveImageLoads=4;
 const api=async(path,options={})=>{let r=await fetch(path,options);let data=await r.json();if(!r.ok)throw Error(data.error||r.statusText);return data};
 const mutate=(path,body={})=>api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({collection_id:collectionId,...body})});
 function notify(message,type='ok'){toast.textContent=message;toast.className='toast show'+(type==='error'?' error':'');clearTimeout(notify.timer);notify.timer=setTimeout(()=>toast.className='toast',3200)}
@@ -767,7 +772,8 @@ function renderComparisonWorkbench(){if(!currentGroup)return;groupCompare.classL
 function compareCard(f){let i=occurrenceNumber(f)+1,dec=tempDecisions[f.face_id]||'',active=f.face_id===activeFaceId?' active':'';return `<article class="compare-card ${active} ${dec}" role="button" tabindex="0" data-id="${f.face_id}" onclick="chooseOccurrence('${f.face_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();chooseOccurrence('${f.face_id}')}" aria-label="Occurrence ${i}"><img class="context-thumb" data-src="${contextSrc(f,compareMode==='matrix'?'face':contextLevel)}" alt="Occurrence ${i} context" decoding="async"><div><b>#${i}</b> ${confidenceBadge(f)}</div><div class="card-actions"><button onclick="event.stopPropagation();pinReference('${f.face_id}')">Als Referenz</button><button onclick="event.stopPropagation();openPhotoDialog('${f.face_id}')">Fotografie öffnen</button></div><div class="decision-row">${decisionButton(f,'match','Passt')}${decisionButton(f,'unsure','Unsicher')}${decisionButton(f,'out','Nicht zugehörig')}</div></article>`}
 
 function hydrateContextImages(){let images=[...document.querySelectorAll('img.context-thumb[data-src]')];if(contextImageObserver)contextImageObserver.disconnect();if(!('IntersectionObserver' in window)){images.forEach(loadContextImage);return}contextImageObserver=new IntersectionObserver(entries=>{entries.forEach(entry=>{if(entry.isIntersecting){loadContextImage(entry.target);contextImageObserver.unobserve(entry.target)}})},{rootMargin:'360px 0px'});images.forEach(img=>contextImageObserver.observe(img))}
-function loadContextImage(img){if(!img.dataset.src)return;img.src=img.dataset.src;delete img.dataset.src}
+function loadContextImage(img){if(!img.dataset.src||img.dataset.queued)return;img.dataset.queued='1';imageQueue.push(img);pumpImageQueue()}
+function pumpImageQueue(){while(activeImageLoads<maxActiveImageLoads&&imageQueue.length){let img=imageQueue.shift();if(!img.dataset.src){continue}activeImageLoads++;let done=()=>{activeImageLoads=Math.max(0,activeImageLoads-1);pumpImageQueue()};img.onload=done;img.onerror=()=>{img.alt=img.alt+' failed to load; retry by switching modes';done()};img.src=img.dataset.src;delete img.dataset.src}}
 function decisionButton(f,value,label){return `<button class="decision-button" aria-pressed="${tempDecisions[f.face_id]===value}" onclick="event.stopPropagation();markTemp('${f.face_id}','${value}')">${label}</button>`}
 function selectedInfo(){let f=currentGroup.faces.find(x=>x.face_id===activeFaceId)||currentGroup.faces[0];if(!f)return 'No occurrence selected.';return `<b>Occurrence ${occurrenceNumber(f)+1}</b><br>File: ${f.image_path||f.image_id}<br>Date: ${f.scanned_at||'not available'}<br>${confidenceBadge(f)}<br>Conflict: ${currentGroup.conflict?'same photograph conflict':'none'}<br>Temporary mark: ${tempDecisions[f.face_id]||'none'}`}
 function setMode(mode){compareMode=mode;renderComparisonWorkbench()}
@@ -804,7 +810,91 @@ start().catch(e=>notify(e.message,'error'));
 
 
 
+_DERIVATIVE_ALGORITHM_VERSION = "face-review-derivatives-v2"
 _CONTEXT_LEVELS = {"face": (1.7, 360), "person": (5.0, 900), "scene": (0.0, 1400)}
+_PREVIEW_MAX_SIZE = 1400
+_IMAGE_PROCESSING_LIMIT = int(os.environ.get("KIOKUFUX_FACE_IMAGE_WORKERS", "4"))
+_LOG = logging.getLogger(__name__)
+
+
+class _SingleFlightCache:
+    def __init__(self, limit: int = _IMAGE_PROCESSING_LIMIT):
+        self.semaphore = threading.BoundedSemaphore(max(1, limit))
+        self._lock = threading.Lock()
+        self._locks: dict[str, tuple[threading.Lock, int]] = {}
+
+    def acquire_key(self, key: str):
+        with self._lock:
+            lock, refs = self._locks.get(key, (threading.Lock(), 0))
+            self._locks[key] = (lock, refs + 1)
+        lock.acquire()
+        return lock
+
+    def release_key(self, key: str, lock: threading.Lock) -> None:
+        lock.release()
+        with self._lock:
+            current, refs = self._locks.get(key, (None, 0))
+            if current is lock and refs <= 1:
+                self._locks.pop(key, None)
+            elif current is lock:
+                self._locks[key] = (lock, refs - 1)
+
+_DERIVATIVE_CACHE = _SingleFlightCache()
+
+def _collection_cache_root(workspace: Path, cache_dir: Path | None = None) -> Path:
+    base = cache_dir or (Path(os.environ["KIOKUFUX_FACE_CACHE_DIR"]) if os.environ.get("KIOKUFUX_FACE_CACHE_DIR") else workspace / "cache")
+    collection_id = ReviewState.load_existing(workspace).get("collection_id") or hashlib.sha256(str(workspace.resolve()).encode()).hexdigest()
+    return base.expanduser().resolve() / "face-review" / str(collection_id)[:32]
+
+def _warn_if_wsl_mounted(root: Path, cache_root: Path) -> None:
+    try:
+        is_wsl = "microsoft" in Path("/proc/version").read_text(errors="ignore").lower()
+    except OSError:
+        is_wsl = False
+    if is_wsl and (str(root.resolve()).startswith("/mnt/") or str(cache_root).startswith("/mnt/")):
+        _LOG.info("Face review on WSL is faster with --cache-dir on the Linux filesystem, e.g. ~/.cache/kiokufux")
+
+def _etag_for(path: Path) -> str:
+    st = path.stat()
+    return '"%s-%s"' % (st.st_mtime_ns, st.st_size)
+
+def _atomic_write(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        os.replace(tmp, path)
+    finally:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+
+def _cache_key(kind: str, row: dict, level: str, max_size: int, box: tuple[float, ...] = ()) -> str:
+    stable = {"v": _DERIVATIVE_ALGORITHM_VERSION, "kind": kind, "fingerprint": row.get("content_fingerprint"), "image_id": row.get("image_id"), "face_id": row.get("face_id") if kind != "scene" else None, "level": level, "max": max_size, "box": [round(v, 8) for v in box]}
+    return hashlib.sha256(json.dumps(stable, sort_keys=True).encode()).hexdigest() + ".jpg"
+
+def _render_cached_jpeg(cache_path: Path, cache_key: str, generator, *, label: str) -> Path | None:
+    timings: dict[str, float | str] = {"hit": "miss"}
+    started = time.perf_counter()
+    lookup = time.perf_counter()
+    if cache_path.exists():
+        timings["hit"] = "hit"; timings["cache_lookup_ms"] = (time.perf_counter() - lookup) * 1000; timings["total_ms"] = (time.perf_counter() - started) * 1000; _LOG.debug("face derivative %s timings %s", label, timings); return cache_path
+    key_wait = time.perf_counter(); key_lock = _DERIVATIVE_CACHE.acquire_key(cache_key); timings["singleflight_wait_ms"] = (time.perf_counter() - key_wait) * 1000
+    try:
+        if cache_path.exists():
+            timings["hit"] = "hit-after-wait"; timings["total_ms"] = (time.perf_counter() - started) * 1000; _LOG.debug("face derivative %s timings %s", label, timings); return cache_path
+        sem_wait = time.perf_counter(); _DERIVATIVE_CACHE.semaphore.acquire(); timings["semaphore_wait_ms"] = (time.perf_counter() - sem_wait) * 1000
+        try:
+            data, phases = generator()
+            timings.update(phases)
+            write = time.perf_counter(); _atomic_write(cache_path, data); timings["cache_write_ms"] = (time.perf_counter() - write) * 1000
+        finally:
+            _DERIVATIVE_CACHE.semaphore.release()
+        timings["total_ms"] = (time.perf_counter() - started) * 1000; _LOG.debug("face derivative %s timings %s", label, timings); return cache_path
+    finally:
+        _DERIVATIVE_CACHE.release_key(cache_key, key_lock)
 
 def _face_row(store: FaceStore, face_id: str):
     return store.db.execute("""SELECT face_id,image_id,image_path,x1,y1,x2,y2,confidence,quality,content_fingerprint,scanned_at
@@ -834,29 +924,41 @@ def _context_crop_box(row, width: int, height: int, level: str, aspect: float = 
     left, top = max(0, left), max(0, top)
     return (int(round(left)), int(round(top)), int(round(right)), int(round(bottom)))
 
-def _render_face_context(root: Path, workspace: Path, store: FaceStore, face_id: str, level: str) -> bytes | None:
+def _render_face_context(root: Path, cache_root: Path, row: dict, level: str) -> Path | None:
     if level not in _CONTEXT_LEVELS:
         raise ValueError("unsupported context level")
-    row = _face_row(store, face_id)
-    if row is None:
-        return None
-    cache_key = f"{row['content_fingerprint']}-{face_id}-{level}.jpg"
-    cache_path = workspace / "cache" / "face-context" / cache_key
-    if cache_path.exists():
-        return cache_path.read_bytes()
-    path = safe_collection_path(root, str(row["image_path"]))
-    if not path.exists():
-        return None
-    with Image.open(path) as image:
-        rendered = ImageOps.exif_transpose(image).convert("RGB")
-    crop = rendered.crop(_context_crop_box(row, rendered.width, rendered.height, level))
     max_size = _CONTEXT_LEVELS[level][1]
-    crop.thumbnail((max_size, max_size))
-    output = io.BytesIO()
-    crop.save(output, "JPEG", quality=88)
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_bytes(output.getvalue())
-    return output.getvalue()
+    box = () if level == "scene" else tuple(row[key] for key in ("x1", "y1", "x2", "y2"))
+    key = _cache_key("scene" if level == "scene" else "face", row, level, max_size, box)
+    cache_path = cache_root / "face-context" / level / key
+    def generate():
+        phases = {}
+        t = time.perf_counter(); path = safe_collection_path(root, str(row["image_path"])); phases["source_resolution_ms"] = (time.perf_counter() - t) * 1000
+        if not path.exists():
+            raise FileNotFoundError(path)
+        t = time.perf_counter()
+        with Image.open(path) as image:
+            phases["source_open_ms"] = (time.perf_counter() - t) * 1000
+            t = time.perf_counter(); rendered = ImageOps.exif_transpose(image).convert("RGB"); phases["exif_transpose_ms"] = (time.perf_counter() - t) * 1000
+        t = time.perf_counter(); crop = rendered.crop(_context_crop_box(row, rendered.width, rendered.height, level)); crop.thumbnail((max_size, max_size)); phases["crop_resize_ms"] = (time.perf_counter() - t) * 1000
+        output = io.BytesIO(); crop.save(output, "JPEG", quality=88); return output.getvalue(), phases
+    return _render_cached_jpeg(cache_path, key, generate, label=f"face:{level}")
+
+def _render_image_preview(root: Path, cache_root: Path, row: dict) -> Path | None:
+    key = _cache_key("preview", row, "preview", _PREVIEW_MAX_SIZE)
+    cache_path = cache_root / "image-previews" / key
+    def generate():
+        phases = {}
+        t = time.perf_counter(); path = safe_collection_path(root, str(row["image_path"])); phases["source_resolution_ms"] = (time.perf_counter() - t) * 1000
+        if not path.exists():
+            raise FileNotFoundError(path)
+        t = time.perf_counter()
+        with Image.open(path) as image:
+            phases["source_open_ms"] = (time.perf_counter() - t) * 1000
+            t = time.perf_counter(); rendered = ImageOps.exif_transpose(image).convert("RGB"); phases["exif_transpose_ms"] = (time.perf_counter() - t) * 1000
+        t = time.perf_counter(); rendered.thumbnail((_PREVIEW_MAX_SIZE, _PREVIEW_MAX_SIZE)); phases["crop_resize_ms"] = (time.perf_counter() - t) * 1000
+        output = io.BytesIO(); rendered.save(output, "JPEG", quality=88); return output.getvalue(), phases
+    return _render_cached_jpeg(cache_path, key, generate, label="preview")
 
 def safe_collection_path(root: Path, candidate: str) -> Path:
     windows_candidate = PureWindowsPath(candidate)
@@ -932,40 +1034,53 @@ def _merge_people(state: ReviewState, source_person_id: str, target_person_id: s
 _CLIENT_DISCONNECT_ERRORS = (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)
 
 
-def _send_response_body(handler: BaseHTTPRequestHandler, status: int, content_type: str, data: bytes) -> None:
+def _send_response_body(handler: BaseHTTPRequestHandler, status: int, content_type: str, data: bytes, headers: dict[str, str] | None = None) -> None:
     """Send an HTTP response body, ignoring clients that disconnect mid-write."""
     try:
         handler.send_response(status)
         handler.send_header("Content-Type", content_type)
         handler.send_header("Content-Length", str(len(data)))
+        for name, value in (headers or {}).items():
+            handler.send_header(name, value)
         handler.end_headers()
         handler.wfile.write(data)
     except _CLIENT_DISCONNECT_ERRORS:
         return
 
 
-def make_server(root: Path, workspace: Path, host: str = "127.0.0.1", port: int = 0):
+def make_server(root: Path, workspace: Path, host: str = "127.0.0.1", port: int = 0, cache_dir: Path | None = None):
     if host not in {"127.0.0.1", "::1", "localhost"}:
         raise ValueError("face review may only bind to loopback")
     with FaceStore(workspace):
         pass
     state = ReviewState(workspace)
     state_lock = threading.RLock()
+    cache_root = _collection_cache_root(workspace, cache_dir)
+    _warn_if_wsl_mounted(root, cache_root)
 
     class Handler(BaseHTTPRequestHandler):
         def handle(self):
-            with state_lock:
-                try:
-                    super().handle()
-                except _CLIENT_DISCONNECT_ERRORS:
-                    return
+            try:
+                super().handle()
+            except _CLIENT_DISCONNECT_ERRORS:
+                return
 
         def send_json(self, value, status=200):
             data = json.dumps(value).encode()
             _send_response_body(self, status, "application/json", data)
 
-        def send_jpeg(self, data: bytes):
-            _send_response_body(self, 200, "image/jpeg", data)
+        def send_jpeg(self, data: bytes, etag: str | None = None):
+            headers = {"Cache-Control": "private, max-age=3600"}
+            if etag:
+                headers["ETag"] = etag
+                if self.headers.get("If-None-Match") == etag:
+                    _send_response_body(self, 304, "image/jpeg", b"", headers)
+                    return
+            _send_response_body(self, 200, "image/jpeg", data, headers)
+
+        def send_cached_jpeg(self, path: Path):
+            etag = _etag_for(path)
+            return self.send_jpeg(b"" if self.headers.get("If-None-Match") == etag else path.read_bytes(), etag)
 
         def do_GET(self):
             route = urlparse(self.path).path
@@ -992,31 +1107,28 @@ def make_server(root: Path, workspace: Path, host: str = "127.0.0.1", port: int 
                 if len(parts) == 4 and parts[:2] == ["api", "faces"] and parts[3] == "thumbnail":
                     row = store.db.execute("SELECT face_id FROM face_occurrences WHERE face_id=?", (parts[2],)).fetchone()
                     path = workspace / "cache" / "face-thumbnails" / f"{parts[2]}.jpg"
-                    return self.send_jpeg(path.read_bytes()) if row and path.exists() else self.send_json({"error": "face not found"}, 404)
+                    return self.send_cached_jpeg(path) if row and path.exists() else self.send_json({"error": "face not found"}, 404)
                 if len(parts) == 4 and parts[:2] == ["api", "faces"] and parts[3] == "context":
                     level = parse_qs(urlparse(self.path).query).get("level", ["face"])[0]
-                    try:
-                        data = _render_face_context(root, workspace, store, parts[2], level)
-                    except ValueError:
+                    if level not in _CONTEXT_LEVELS:
                         return self.send_json({"error": "unsupported context level"}, 400)
+                    try:
+                        row = _face_row(store, parts[2])
+                        if row is None:
+                            return self.send_json({"error": "face not found"}, 404)
+                        data = _render_face_context(root, cache_root, dict(row), level)
                     except (OSError, ValueError):
                         return self.send_json({"error": "image unavailable"}, 404)
-                    return self.send_jpeg(data) if data else self.send_json({"error": "face not found"}, 404)
+                    return self.send_cached_jpeg(data) if data else self.send_json({"error": "face not found"}, 404)
                 if len(parts) == 4 and parts[:2] == ["api", "images"] and parts[3] == "thumbnail":
-                    row = store.db.execute("SELECT image_path FROM face_occurrences WHERE image_id=? LIMIT 1", (parts[2],)).fetchone()
+                    row = store.db.execute("SELECT image_id,image_path,content_fingerprint FROM face_occurrences WHERE image_id=? LIMIT 1", (parts[2],)).fetchone()
                     if not row:
                         return self.send_json({"error": "image not found"}, 404)
                     try:
-                        path = safe_collection_path(root, str(row["image_path"]))
+                        preview = _render_image_preview(root, cache_root, dict(row))
+                        return self.send_cached_jpeg(preview) if preview else self.send_json({"error": "image not found"}, 404)
                     except ValueError:
                         return self.send_json({"error": "image outside collection"}, 403)
-                    try:
-                        with Image.open(path) as image:
-                            rendered = ImageOps.exif_transpose(image).convert("RGB")
-                            rendered.thumbnail((1400, 1400))
-                            output = io.BytesIO()
-                            rendered.save(output, "JPEG", quality=88)
-                        return self.send_jpeg(output.getvalue())
                     except (OSError, ValueError):
                         return self.send_json({"error": "image unavailable"}, 404)
                 if len(parts) == 4 and parts[:2] == ["api", "images"] and parts[3] == "faces":
@@ -1039,107 +1151,108 @@ def make_server(root: Path, workspace: Path, host: str = "127.0.0.1", port: int 
             return body
 
         def do_POST(self):
-            body = self._body()
-            if body is None:
-                return
-            route = urlparse(self.path).path
-            with FaceStore(workspace) as store:
-                if route == "/api/people/merge":
-                    try:
-                        merged = _merge_people(state, str(body.get("source_person_id", "")), str(body.get("target_person_id", "")))
-                    except KeyError:
-                        return self.send_json({"error": "person not found"}, 404)
-                    except ValueError as exc:
-                        return self.send_json({"error": str(exc)}, 400)
-                    person = _confirmed_person(store, state, merged["person_id"], include_faces=True) or merged
-                    return self.send_json(person)
-                if route == "/api/people":
-                    group = store.group(str(body.get("group_id", "")))
+            with state_lock:
+                body = self._body()
+                if body is None:
+                    return
+                route = urlparse(self.path).path
+                with FaceStore(workspace) as store:
+                    if route == "/api/people/merge":
+                        try:
+                            merged = _merge_people(state, str(body.get("source_person_id", "")), str(body.get("target_person_id", "")))
+                        except KeyError:
+                            return self.send_json({"error": "person not found"}, 404)
+                        except ValueError as exc:
+                            return self.send_json({"error": str(exc)}, 400)
+                        person = _confirmed_person(store, state, merged["person_id"], include_faces=True) or merged
+                        return self.send_json(person)
+                    if route == "/api/people":
+                        group = store.group(str(body.get("group_id", "")))
+                        if not group:
+                            return self.send_json({"error": "group not found"}, 404)
+                        if group["review_state"] != "reviewed" or group["conflict"]:
+                            return self.send_json({"error": "group must be reviewed and conflict-free"}, 409)
+                        try:
+                            person = state.create_person([f["face_id"] for f in group["faces"]], body.get("display_name"), group.get("friendly_name") or group.get("friendly_id"))
+                        except ValueError as exc:
+                            return self.send_json({"error": str(exc)}, 409)
+                        return self.send_json(person, 201)
+                    if route == "/api/review/create-group":
+                        face_ids = body.get("face_ids", [])
+                        if not isinstance(face_ids, list) or len(set(face_ids)) < 2:
+                            return self.send_json({"error": "select at least two faces"}, 400)
+                        unique_face_ids = list(dict.fromkeys(str(face_id) for face_id in face_ids))
+                        placeholders = ",".join("?" for _ in unique_face_ids)
+                        rows = store.db.execute(f"""SELECT f.face_id,f.image_id,f.backend_id,f.model_id,f.model_version,
+                          f.preprocessing_version,f.embedding_dimensions,m.group_id
+                          FROM face_occurrences f LEFT JOIN face_group_members m USING(face_id)
+                          WHERE f.face_id IN ({placeholders}) AND f.excluded=0""", unique_face_ids).fetchall()
+                        if len(rows) != len(unique_face_ids):
+                            return self.send_json({"error": "all selected faces must exist and be usable"}, 400)
+                        if any(row["group_id"] for row in rows):
+                            return self.send_json({"error": "selected faces must be ungrouped"}, 409)
+                        model_keys = {":".join(str(row[key]) for key in ("backend_id", "model_id", "model_version", "preprocessing_version", "embedding_dimensions")) for row in rows}
+                        if len(model_keys) != 1:
+                            return self.send_json({"error": "selected faces use incompatible face models"}, 409)
+                        run_id = str(uuid.uuid4())
+                        group_id = str(uuid.uuid4())
+                        params = {"source": "manual-review", "action": "create-group"}
+                        store.db.execute("INSERT INTO cluster_runs VALUES(?,?,?,?)", (run_id, sorted(model_keys)[0], json.dumps(params, sort_keys=True), datetime.now(timezone.utc).isoformat()))
+                        store.db.execute("INSERT INTO face_groups VALUES(?,?,?,?,0)", (group_id, run_id, unique_face_ids[0], "needs_review"))
+                        store.db.executemany("INSERT INTO face_group_members VALUES(?,?,?)", [(group_id, face_id, 1.0) for face_id in unique_face_ids])
+                        _refresh_group(store, group_id)
+                        store.db.commit()
+                        state.record_action("must-link", unique_face_ids, group_id=group_id, source="create-group")
+                        group = store.group(group_id) or {"group_id": group_id}
+                        return self.send_json(group, 201)
+                    if route == "/api/review/merge":
+                        source, target = body.get("source_group_id"), body.get("target_group_id")
+                        if not source or not target or source == target:
+                            return self.send_json({"error": "two distinct groups are required"}, 400)
+                        if not store.group(source) or not store.group(target):
+                            return self.send_json({"error": "group not found"}, 404)
+                        face_ids = [r[0] for r in store.db.execute("SELECT face_id FROM face_group_members WHERE group_id IN (?,?)", (source, target))]
+                        store.db.execute("UPDATE OR IGNORE face_group_members SET group_id=? WHERE group_id=?", (target, source))
+                        store.db.execute("DELETE FROM face_group_members WHERE group_id=?", (source,))
+                        store.db.execute("DELETE FROM face_groups WHERE group_id=?", (source,))
+                        _refresh_group(store, target)
+                        store.db.commit()
+                        return self.send_json(state.record_action("must-link", face_ids, source_group_id=source, target_group_id=target))
+                    group_id = str(body.get("group_id", ""))
+                    group = store.group(group_id)
                     if not group:
                         return self.send_json({"error": "group not found"}, 404)
-                    if group["review_state"] != "reviewed" or group["conflict"]:
-                        return self.send_json({"error": "group must be reviewed and conflict-free"}, 409)
-                    try:
-                        person = state.create_person([f["face_id"] for f in group["faces"]], body.get("display_name"), group.get("friendly_name") or group.get("friendly_id"))
-                    except ValueError as exc:
-                        return self.send_json({"error": str(exc)}, 409)
-                    return self.send_json(person, 201)
-                if route == "/api/review/create-group":
+                    known = {face["face_id"] for face in group["faces"]}
                     face_ids = body.get("face_ids", [])
-                    if not isinstance(face_ids, list) or len(set(face_ids)) < 2:
-                        return self.send_json({"error": "select at least two faces"}, 400)
-                    unique_face_ids = list(dict.fromkeys(str(face_id) for face_id in face_ids))
-                    placeholders = ",".join("?" for _ in unique_face_ids)
-                    rows = store.db.execute(f"""SELECT f.face_id,f.image_id,f.backend_id,f.model_id,f.model_version,
-                      f.preprocessing_version,f.embedding_dimensions,m.group_id
-                      FROM face_occurrences f LEFT JOIN face_group_members m USING(face_id)
-                      WHERE f.face_id IN ({placeholders}) AND f.excluded=0""", unique_face_ids).fetchall()
-                    if len(rows) != len(unique_face_ids):
-                        return self.send_json({"error": "all selected faces must exist and be usable"}, 400)
-                    if any(row["group_id"] for row in rows):
-                        return self.send_json({"error": "selected faces must be ungrouped"}, 409)
-                    model_keys = {":".join(str(row[key]) for key in ("backend_id", "model_id", "model_version", "preprocessing_version", "embedding_dimensions")) for row in rows}
-                    if len(model_keys) != 1:
-                        return self.send_json({"error": "selected faces use incompatible face models"}, 409)
-                    run_id = str(uuid.uuid4())
-                    group_id = str(uuid.uuid4())
-                    params = {"source": "manual-review", "action": "create-group"}
-                    store.db.execute("INSERT INTO cluster_runs VALUES(?,?,?,?)", (run_id, sorted(model_keys)[0], json.dumps(params, sort_keys=True), datetime.now(timezone.utc).isoformat()))
-                    store.db.execute("INSERT INTO face_groups VALUES(?,?,?,?,0)", (group_id, run_id, unique_face_ids[0], "needs_review"))
-                    store.db.executemany("INSERT INTO face_group_members VALUES(?,?,?)", [(group_id, face_id, 1.0) for face_id in unique_face_ids])
-                    _refresh_group(store, group_id)
-                    store.db.commit()
-                    state.record_action("must-link", unique_face_ids, group_id=group_id, source="create-group")
-                    group = store.group(group_id) or {"group_id": group_id}
-                    return self.send_json(group, 201)
-                if route == "/api/review/merge":
-                    source, target = body.get("source_group_id"), body.get("target_group_id")
-                    if not source or not target or source == target:
-                        return self.send_json({"error": "two distinct groups are required"}, 400)
-                    if not store.group(source) or not store.group(target):
-                        return self.send_json({"error": "group not found"}, 404)
-                    face_ids = [r[0] for r in store.db.execute("SELECT face_id FROM face_group_members WHERE group_id IN (?,?)", (source, target))]
-                    store.db.execute("UPDATE OR IGNORE face_group_members SET group_id=? WHERE group_id=?", (target, source))
-                    store.db.execute("DELETE FROM face_group_members WHERE group_id=?", (source,))
-                    store.db.execute("DELETE FROM face_groups WHERE group_id=?", (source,))
-                    _refresh_group(store, target)
-                    store.db.commit()
-                    return self.send_json(state.record_action("must-link", face_ids, source_group_id=source, target_group_id=target))
-                group_id = str(body.get("group_id", ""))
-                group = store.group(group_id)
-                if not group:
-                    return self.send_json({"error": "group not found"}, 404)
-                known = {face["face_id"] for face in group["faces"]}
-                face_ids = body.get("face_ids", [])
-                if not isinstance(face_ids, list) or not set(face_ids) <= known:
-                    return self.send_json({"error": "face_ids must belong to the group"}, 400)
-                if route == "/api/review/split":
-                    if not face_ids or len(face_ids) == len(known):
-                        return self.send_json({"error": "select some, but not all, group faces"}, 400)
-                    new_group = str(uuid.uuid4())
-                    store.db.execute("INSERT INTO face_groups VALUES(?,?,?,?,0)", (new_group, group["cluster_run_id"], face_ids[0], "unreviewed"))
-                    store.db.executemany("UPDATE face_group_members SET group_id=? WHERE group_id=? AND face_id=?", [(new_group, group_id, face_id) for face_id in face_ids])
-                    _refresh_group(store, group_id)
-                    _refresh_group(store, new_group)
-                    store.db.commit()
-                    return self.send_json(state.record_action("cannot-link", face_ids, group_id=group_id, new_group_id=new_group))
-                if route in {"/api/review/reject-face", "/api/review/exclude-from-clustering"}:
-                    if not face_ids:
-                        return self.send_json({"error": "select at least one face"}, 400)
-                    store.db.executemany("DELETE FROM face_group_members WHERE group_id=? AND face_id=?", [(group_id, face_id) for face_id in face_ids])
-                    if route.endswith("exclude-from-clustering"):
-                        store.db.executemany("UPDATE face_occurrences SET excluded=1 WHERE face_id=?", [(face_id,) for face_id in face_ids])
-                    _refresh_group(store, group_id)
-                    store.db.commit()
-                    action = "reject-face" if route.endswith("reject-face") else "exclude-from-clustering"
-                    return self.send_json(state.record_action(action, face_ids, group_id=group_id))
-                if route == "/api/review/mark-group-reviewed":
-                    if group["conflict"]:
-                        return self.send_json({"error": "resolve the same-photograph conflict first"}, 409)
-                    store.db.execute("UPDATE face_groups SET review_state='reviewed' WHERE group_id=?", (group_id,))
-                    store.db.commit()
-                    return self.send_json(state.record_action("mark-group-reviewed", list(known), group_id=group_id))
-            return self.send_json({"error": "not found"}, 404)
+                    if not isinstance(face_ids, list) or not set(face_ids) <= known:
+                        return self.send_json({"error": "face_ids must belong to the group"}, 400)
+                    if route == "/api/review/split":
+                        if not face_ids or len(face_ids) == len(known):
+                            return self.send_json({"error": "select some, but not all, group faces"}, 400)
+                        new_group = str(uuid.uuid4())
+                        store.db.execute("INSERT INTO face_groups VALUES(?,?,?,?,0)", (new_group, group["cluster_run_id"], face_ids[0], "unreviewed"))
+                        store.db.executemany("UPDATE face_group_members SET group_id=? WHERE group_id=? AND face_id=?", [(new_group, group_id, face_id) for face_id in face_ids])
+                        _refresh_group(store, group_id)
+                        _refresh_group(store, new_group)
+                        store.db.commit()
+                        return self.send_json(state.record_action("cannot-link", face_ids, group_id=group_id, new_group_id=new_group))
+                    if route in {"/api/review/reject-face", "/api/review/exclude-from-clustering"}:
+                        if not face_ids:
+                            return self.send_json({"error": "select at least one face"}, 400)
+                        store.db.executemany("DELETE FROM face_group_members WHERE group_id=? AND face_id=?", [(group_id, face_id) for face_id in face_ids])
+                        if route.endswith("exclude-from-clustering"):
+                            store.db.executemany("UPDATE face_occurrences SET excluded=1 WHERE face_id=?", [(face_id,) for face_id in face_ids])
+                        _refresh_group(store, group_id)
+                        store.db.commit()
+                        action = "reject-face" if route.endswith("reject-face") else "exclude-from-clustering"
+                        return self.send_json(state.record_action(action, face_ids, group_id=group_id))
+                    if route == "/api/review/mark-group-reviewed":
+                        if group["conflict"]:
+                            return self.send_json({"error": "resolve the same-photograph conflict first"}, 409)
+                        store.db.execute("UPDATE face_groups SET review_state='reviewed' WHERE group_id=?", (group_id,))
+                        store.db.commit()
+                        return self.send_json(state.record_action("mark-group-reviewed", list(known), group_id=group_id))
+                return self.send_json({"error": "not found"}, 404)
 
         def log_message(self, *_):
             pass
@@ -1147,8 +1260,8 @@ def make_server(root: Path, workspace: Path, host: str = "127.0.0.1", port: int 
     return ThreadingHTTPServer((host, port), Handler)
 
 
-def serve_review(root: Path, workspace: Path, host="127.0.0.1", port=0, open_browser=True):
-    server = make_server(root, workspace, host, port)
+def serve_review(root: Path, workspace: Path, host="127.0.0.1", port=0, open_browser=True, cache_dir: Path | None = None):
+    server = make_server(root, workspace, host, port, cache_dir)
     url = f"http://{host}:{server.server_address[1]}/"
     print(f"Face review: {url}\nPress Ctrl+C to stop.")
     if open_browser:

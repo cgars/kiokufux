@@ -92,7 +92,7 @@ kiokufux vlm-descriptions PATH [PHOTO_ID]
 
 kiokufux faces scan PATH [--device auto|cuda|cpu]
 kiokufux faces cluster PATH
-kiokufux faces review PATH [--host HOST] [--port PORT] [--no-open]
+kiokufux faces review PATH [--host HOST] [--port PORT] [--no-open] [--cache-dir CACHE_DIR]
 kiokufux faces reset-derived PATH
 kiokufux faces remove-all PATH --yes
 ```
@@ -355,6 +355,6 @@ Three modes help compare groups of two, three, ten, or more occurrences without 
 - **Kontext** uses the same pinned reference but shows larger source-photo crops so reviewers can compare the person in their photographic surroundings.
 - **1:1** compares the pinned reference with exactly one selected occurrence.
 
-The context crop endpoint accepts only known `face_id` values and the fixed crop levels `face`, `person`, and `scene` at `/api/faces/{face_id}/context?level=face|person|scene`. Crops are centered on the stored, EXIF-oriented bounding box, clipped safely at image edges, rendered as JPEG derivatives with bounded dimensions, and cached under `.kiokufux/cache/face-context/` using the source content fingerprint, `face_id`, and crop level. The original photograph is never modified, and no file path is accepted from the browser.
+The context crop endpoint accepts only known `face_id` values and the fixed crop levels `face`, `person`, and `scene` at `/api/faces/{face_id}/context?level=face|person|scene`. Crops are centered on the stored, EXIF-oriented bounding box, clipped safely at image edges, rendered as JPEG derivatives with bounded dimensions, and cached under `.kiokufux/cache/face-review/<collection>/` by default. The cache key includes the source content fingerprint, output size, crop level, relevant bounding box, and derivative algorithm version; scene and full-photo previews are reused per source photograph where possible. The original photograph is never modified, and no file path is accepted from the browser. Use `kiokufux faces review PATH --cache-dir ~/.cache/kiokufux` or `KIOKUFUX_FACE_CACHE_DIR` to keep derivative writes on a WSL-native filesystem for Windows-mounted collections.
 
 Temporary comparison decisions are session-only helpers: **Passt**, **Unsicher**, and **Nicht zugehörig** are stored only in browser state. Marking **Nicht zugehörig** selects that occurrence to prepare a later Split selected action, but it does not persist review data by itself. Durable changes continue to be written only by the explicit existing review actions: Split selected, Reject detection, Exclude poor crop, Mark group reviewed, Confirm person, merge actions, and Create group from selected.

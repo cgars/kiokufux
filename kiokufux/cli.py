@@ -318,6 +318,7 @@ def _build_parser() -> argparse.ArgumentParser:
     face_review.add_argument("--host", default="127.0.0.1")
     face_review.add_argument("--port", type=int, default=0)
     face_review.add_argument("--no-open", action="store_true")
+    face_review.add_argument("--cache-dir", type=Path, help="Directory for face-review derivative cache; use a Linux filesystem under WSL for Windows-mounted collections")
     for action in ("reset-derived", "remove-all"):
         cleanup = face_commands.add_parser(action); cleanup.add_argument("path",type=Path)
         if action == "remove-all": cleanup.add_argument("--yes",action="store_true",help="Confirm removal of all face data")
@@ -500,7 +501,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Face clustering complete: groups={stats['groups']}, ungrouped={stats['ungrouped']}"); return 0
         if args.faces_cmd == "review":
             from .face_review import serve_review
-            serve_review(root,ws,args.host,args.port,not args.no_open); return 0
+            serve_review(root,ws,args.host,args.port,not args.no_open,args.cache_dir); return 0
         if args.faces_cmd == "reset-derived":
             reset_derived(ws); print("Removed derived face data; people and review decisions were preserved."); return 0
         if args.faces_cmd == "remove-all":

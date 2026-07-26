@@ -356,7 +356,7 @@ summary:focus-visible,
 .pinned-reference { position:sticky; top:1rem; padding:.85rem; border:1px solid var(--line); border-radius:1rem; background:var(--paper); box-shadow:0 8px 24px rgba(23,36,31,.08); }
 .pinned-reference img { width:100%; aspect-ratio:4/3; object-fit:cover; border-radius:.75rem; }
 .compare-matrix { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr)); gap:.85rem; }
-@container (min-width: 760px) { .compare-matrix { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 760px) { .compare-matrix { grid-template-columns: repeat(4, 1fr); } }
 .compare-card { position:relative; display:grid; gap:.5rem; padding:.55rem; border:1px solid var(--line); border-radius:.95rem; background:var(--paper-light); cursor:pointer; box-shadow:0 7px 20px rgba(23,36,31,.06); }
 .compare-card.active { border-color:var(--rust); box-shadow:0 0 0 3px rgba(169,87,53,.15); }
 .compare-card.selected { border-color:var(--rust); background:#fff9f2; box-shadow:0 0 0 3px rgba(169,87,53,.18),0 14px 28px rgba(23,36,31,.11); }

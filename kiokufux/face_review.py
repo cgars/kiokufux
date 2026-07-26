@@ -1126,7 +1126,9 @@ def make_server(root: Path, workspace: Path, host: str = "127.0.0.1", port: int 
                         if row is None:
                             return self.send_json({"error": "face not found"}, 404)
                         data = _render_face_context(root, cache_root, dict(row), level)
-                    except (OSError, ValueError):
+                    except ValueError:
+                        return self.send_json({"error": "image outside collection"}, 403)
+                    except OSError:
                         return self.send_json({"error": "image unavailable"}, 404)
                     return self.send_cached_jpeg(data) if data else self.send_json({"error": "face not found"}, 404)
                 if len(parts) == 4 and parts[:2] == ["api", "images"] and parts[3] == "thumbnail":

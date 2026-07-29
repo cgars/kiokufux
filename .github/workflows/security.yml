@@ -1,0 +1,132 @@
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sast:
+    name: SAST (Bandit and Semgrep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install open-source scanners
+        run: python -m pip install --disable-pip-version-check "bandit[toml]" semgrep
+
+      - name: Run Bandit
+        id: bandit
+        continue-on-error: true
+        run: >-
+          bandit --configfile pyproject.toml --recursive kiokufux
+          --format json --output bandit-report.json
+
+      - name: Run Semgrep community rules
+        id: semgrep
+        continue-on-error: true
+        env:
+          SEMGREP_SEND_METRICS: "off"
+        run: >-
+          semgrep scan
+          --config p/python
+          --config p/security-audit
+          --config p/secrets
+          --error
+          --metrics off
+          --json-output semgrep-report.json
+          kiokufux tests
+
+      - name: Upload SAST reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sast-reports
+          path: |
+            bandit-report.json
+            semgrep-report.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Enforce SAST results
+        if: always()
+        env:
+          BANDIT_OUTCOME: ${{ steps.bandit.outcome }}
+          SEMGREP_OUTCOME: ${{ steps.semgrep.outcome }}
+        run: |
+          printf '### SAST results\n\n| Scanner | Result |\n|---|---|\n' >> "$GITHUB_STEP_SUMMARY"
+          printf '| Bandit | `%s` |\n| Semgrep | `%s` |\n' "$BANDIT_OUTCOME" "$SEMGREP_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+          test "$BANDIT_OUTCOME" = success && test "$SEMGREP_OUTCOME" = success
+
+  dependency-audit:
+    name: Dependency vulnerability audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project and pip-audit
+        run: python -m pip install --disable-pip-version-check . pip-audit
+
+      - name: Audit installed Python packages
+        id: pip_audit
+        continue-on-error: true
+        run: pip-audit --local --strict --format json --output pip-audit-report.json
+
+      - name: Upload dependency audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-audit-report
+          path: pip-audit-report.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Enforce dependency audit result
+        if: always()
+        env:
+          AUDIT_OUTCOME: ${{ steps.pip_audit.outcome }}
+        run: |
+          printf '### Dependency audit result\n\n`pip-audit`: `%s`\n' "$AUDIT_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+          test "$AUDIT_OUTCOME" = success
+
+  security-gate:
+    name: Security gate
+    if: always()
+    needs: [sast, dependency-audit]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require all security jobs to pass
+        env:
+          SAST_RESULT: ${{ needs.sast.result }}
+          DEPENDENCY_RESULT: ${{ needs.dependency-audit.result }}
+        run: |
+          printf '### Security gate\n\n| Check | Result |\n|---|---|\n' >> "$GITHUB_STEP_SUMMARY"
+          printf '| SAST | `%s` |\n| Dependency audit | `%s` |\n' "$SAST_RESULT" "$DEPENDENCY_RESULT" >> "$GITHUB_STEP_SUMMARY"
+          test "$SAST_RESULT" = success && test "$DEPENDENCY_RESULT" = success

@@ -19,3 +19,6 @@ kiokufux = "kiokufux.cli:main"
 
 [tool.setuptools.package-data]
 kiokufux = ["templates/gallery/*.html", "templates/gallery/*.css", "templates/gallery/*.js"]
+
+[tool.bandit]
+exclude_dirs = ["tests"]

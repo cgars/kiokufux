@@ -66,13 +66,17 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Summarize SAST findings
+        if: always()
+        run: python scripts/security_summary.py --bandit bandit-report.json --semgrep semgrep-report.json
+
       - name: Enforce SAST results
         if: always()
         env:
           BANDIT_OUTCOME: ${{ steps.bandit.outcome }}
           SEMGREP_OUTCOME: ${{ steps.semgrep.outcome }}
         run: |
-          printf '### SAST results\n\n| Scanner | Result |\n|---|---|\n' >> "$GITHUB_STEP_SUMMARY"
+          printf '### Scanner execution\n\n| Scanner | Result |\n|---|---|\n' >> "$GITHUB_STEP_SUMMARY"
           printf '| Bandit | `%s` |\n| Semgrep | `%s` |\n' "$BANDIT_OUTCOME" "$SEMGREP_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
           test "$BANDIT_OUTCOME" = success && test "$SEMGREP_OUTCOME" = success
 
@@ -106,6 +110,10 @@ jobs:
           path: pip-audit-report.json
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Summarize dependency findings
+        if: always()
+        run: python scripts/security_summary.py --pip-audit pip-audit-report.json
 
       - name: Enforce dependency audit result
         if: always()

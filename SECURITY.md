@@ -25,8 +25,10 @@ The `Security` GitHub Actions workflow uses only free, open-source scanners:
 Checks run on pull requests, pushes to the default branch, every Monday, and on
 manual request. The scheduled run catches newly published advisories even when
 the source tree has not changed. All scanners run even if another scanner finds
-an issue. Each job writes a result table to the workflow summary, retains its
-machine-readable JSON reports as workflow artifacts for 14 days, and fails when
+an issue. Each job writes a severity breakdown and a compact, file-linked list
+of up to 20 findings to the workflow summary. Code findings also appear as file
+annotations on the workflow run. Machine-readable JSON reports are retained as
+workflow artifacts for 14 days for full investigation, and the job fails when
 it has findings or cannot complete successfully.
 
 The final **Security gate** job passes only when both SAST scanners and the

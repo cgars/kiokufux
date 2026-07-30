@@ -26,8 +26,10 @@ Checks run on pull requests, pushes to the default branch, every Monday, and on
 manual request. The scheduled run catches newly published advisories even when
 the source tree has not changed. All scanners run even if another scanner finds
 an issue. Each job writes a severity breakdown and a compact, file-linked list
-of up to 20 findings to the workflow summary. Code findings also appear as file
-annotations on the workflow run. Machine-readable JSON reports are retained as
+of up to 20 findings to the workflow summary. Bandit and Semgrep findings are
+ordered from highest to lowest severity, with file and line as deterministic
+tie-breakers. Code findings also appear in the same order as file annotations
+on the workflow run. Machine-readable JSON reports are retained as
 workflow artifacts for 14 days for full investigation, and the job fails when
 it has findings or cannot complete successfully.
 

@@ -13,6 +13,14 @@ from typing import Any
 MAX_ROWS = 20
 
 
+def _severity_key(value: object, order: tuple[str, ...]) -> tuple[int, str]:
+    severity = str(value).lower()
+    try:
+        return order.index(severity), severity
+    except ValueError:
+        return len(order), severity
+
+
 def _cell(value: object) -> str:
     return " ".join(str(value).split()).replace("|", "\\|")
 
@@ -28,10 +36,15 @@ def _load(path: Path) -> Any:
 
 def _bandit(path: Path) -> tuple[str, list[str]]:
     findings = _load(path).get("results", [])
+    findings.sort(key=lambda item: (
+        _severity_key(item.get("issue_severity", "unknown"), ("high", "medium", "low")),
+        str(item.get("filename", "")),
+        int(item.get("line_number", 0)),
+    ))
     counts = Counter(str(item.get("issue_severity", "unknown")).lower() for item in findings)
     lines = ["## Bandit", "", f"**{len(findings)} finding(s)** — " + ", ".join(
         f"{name}: {counts.get(name, 0)}" for name in ("high", "medium", "low")
-    )]
+    ), "", "_Ordered by severity: high → medium → low._"]
     annotations = []
     if findings:
         lines += ["", "| Severity | Rule | Location | Finding |", "|---|---|---|---|"]
@@ -51,10 +64,15 @@ def _bandit(path: Path) -> tuple[str, list[str]]:
 
 def _semgrep(path: Path) -> tuple[str, list[str]]:
     findings = _load(path).get("results", [])
+    findings.sort(key=lambda item: (
+        _severity_key(item.get("extra", {}).get("severity", "unknown"), ("error", "warning", "info")),
+        str(item.get("path", "")),
+        int(item.get("start", {}).get("line", 0)),
+    ))
     counts = Counter(str(item.get("extra", {}).get("severity", "unknown")).lower() for item in findings)
     lines = ["## Semgrep", "", f"**{len(findings)} finding(s)** — " + ", ".join(
         f"{name}: {counts.get(name, 0)}" for name in ("error", "warning", "info")
-    )]
+    ), "", "_Ordered by severity: error → warning → info._"]
     annotations = []
     if findings:
         lines += ["", "| Severity | Rule | Location | Finding |", "|---|---|---|---|"]
@@ -81,7 +99,14 @@ def _pip_audit(path: Path) -> tuple[str, list[str]]:
         for dependency in dependencies
         for vulnerability in dependency.get("vulns", [])
     ]
-    lines = ["## Dependency audit", "", f"**{len(findings)} vulnerability finding(s)**"]
+    findings.sort(key=lambda finding: (
+        str(finding[0].get("name", "")).lower(),
+        str(finding[1].get("id", "")),
+    ))
+    lines = [
+        "## Dependency audit", "", f"**{len(findings)} vulnerability finding(s)**", "",
+        "_Ordered by package and advisory ID; pip-audit does not provide a normalized severity._",
+    ]
     if findings:
         lines += ["", "| Package | Installed | Advisory | Fixed in |", "|---|---|---|---|"]
     for dependency, vulnerability in findings[:MAX_ROWS]:

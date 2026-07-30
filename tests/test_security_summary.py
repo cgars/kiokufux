@@ -39,6 +39,27 @@ def test_renders_sast_findings_and_annotations(tmp_path):
     assert "file=kiokufux/other.py,line=11" in annotations
 
 
+def test_sorts_findings_from_highest_to_lowest_severity(tmp_path):
+    bandit = tmp_path / "bandit.json"
+    semgrep = tmp_path / "semgrep.json"
+    bandit.write_text(json.dumps({"results": [
+        {"filename": "low.py", "line_number": 1, "issue_severity": "LOW", "test_id": "LOW"},
+        {"filename": "high.py", "line_number": 2, "issue_severity": "HIGH", "test_id": "HIGH"},
+        {"filename": "medium.py", "line_number": 3, "issue_severity": "MEDIUM", "test_id": "MEDIUM"},
+    ]}))
+    semgrep.write_text(json.dumps({"results": [
+        {"path": "info.py", "start": {"line": 1}, "check_id": "INFO", "extra": {"severity": "INFO"}},
+        {"path": "error.py", "start": {"line": 2}, "check_id": "ERROR", "extra": {"severity": "ERROR"}},
+        {"path": "warning.py", "start": {"line": 3}, "check_id": "WARNING", "extra": {"severity": "WARNING"}},
+    ]}))
+
+    summary, annotations = _run(tmp_path, "--bandit", bandit, "--semgrep", semgrep)
+
+    assert summary.index("`HIGH`") < summary.index("`MEDIUM`") < summary.index("`LOW`")
+    assert summary.index("`ERROR`") < summary.index("`WARNING`") < summary.index("`INFO`")
+    assert annotations.index("title=Bandit HIGH") < annotations.index("title=Bandit LOW")
+
+
 def test_renders_dependency_fixes(tmp_path):
     report = tmp_path / "audit.json"
     report.write_text(json.dumps({"dependencies": [{
